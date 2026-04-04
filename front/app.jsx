@@ -9,9 +9,14 @@ import {
 import Landing from './src/components/Landing';
 import Auth from './src/components/Auth';
 
-const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:8000'
-  : 'https://hearless15.onrender.com';
+const API = (() => {
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:8000';
+    }
+  }
+  return 'https://hearless15.onrender.com';
+})();
 
 // ——————————————————————————————————————————————
 // Constants & helpers
@@ -38,14 +43,24 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 function App() {
 
   // === Auth ===
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(localStorage.getItem('hearless_user') || null);
   const [userAvatar, setUserAvatar] = useState(null);
-  const [appState, setAppState] = useState('landing');
+  const [appState, setAppState] = useState(localStorage.getItem('hearless_user') ? 'dashboard' : 'landing');
   const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Load avatar if user is already in localStorage
+  useEffect(() => {
+    if (currentUser) {
+      fetch(`${API}/api/user/${currentUser}`)
+        .then(r => r.json())
+        .then(d => setUserAvatar(d.avatar))
+        .catch(() => {});
+    }
+  }, [currentUser]);
 
   // === Navigation ===
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -121,20 +136,23 @@ function App() {
       });
       const data = await res.json();
       if (!res.ok) { setAuthError(data.detail || 'Ошибка'); setIsAuthLoading(false); return; }
-      if (appState === 'register') {
-        setAppState('login'); setAuthSuccess('Готово! Теперь войдите.');
-        setIsAuthLoading(false);
-      } else {
-        setCurrentUser(data.username);
-        fetch(`${API}/api/user/${data.username}`).then(r => r.json()).then(d => setUserAvatar(d.avatar)).catch(() => { });
-        setIsAuthLoading(false);
-      }
-    } catch { setAuthError('Нет связи с сервером.'); setIsAuthLoading(false); }
+      
+      const loggedInUser = appState === 'register' ? authUsername : data.username;
+      setCurrentUser(loggedInUser);
+      localStorage.setItem('hearless_user', loggedInUser);
+      fetch(`${API}/api/user/${loggedInUser}`).then(r => r.json()).then(d => setUserAvatar(d.avatar)).catch(() => { });
+      setIsAuthLoading(false);
+      setAppState('dashboard');
+    } catch { setAuthError('Нет связи с сервером. Попробуйте обновить страницу.'); setIsAuthLoading(false); }
   };
 
   const handleLogout = () => {
     stopBrowserSTT();
-    setCurrentUser(null); setAppState('landing');
+    setCurrentUser(null); 
+    localStorage.removeItem('hearless_user');
+    setAppState('landing');
+    setAuthUsername('');
+    setAuthPassword('');
     setIsListening(false); setIsRecordingLecture(false); setLectureNotes('');
   };
 
