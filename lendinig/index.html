@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Лендинг — Hearless</title>
+  <link rel="stylesheet" href="index.css">
+  <style>
+    /* Critical styles with Genoa palette */
+    html,body{height:100%;}
+    body{background:#0d2626;color:#fff;margin:0;font-family:Arial,Helvetica,sans-serif}
+    .container{width:min(1200px,94%);margin:0 auto;padding:24px}
+    .hero-content h1{color:#fff}
+    .feature-card{background:#186d5f;color:#a1eed8;padding:16px;border-radius:12px;margin-top:12px;border:1px solid #22aa8f}
+    .btn{background:#198874;color:#fff;border-radius:8px;padding:8px 12px;border:1px solid #22aa8f}
+    .btn:hover{background:#22aa8f;color:#f1fcf8}
+  </style>
+</head>
+<body class="landing">
+  <header class="container" style="padding-bottom:0">
+    <nav style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) 0">
+      <div class="brand">Hearless</div>
+      <div>
+        <button class="btn btn-ghost" onclick="toggleTheme?.()">Тема</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div class="hero-content">
+        <h1>Масштабируемый лендинг для быстрых функций</h1>
+        <p class="hero-lead">Добавляйте новые функции как карточки — дизайн останется гармоничным благодаря CSS-переменным и утилитам.</p>
+        <div class="cta-row">
+          <button class="btn btn-primary" id="addFeatureBtn">Добавить фичу</button>
+          <button class="btn btn-ghost">Узнать больше</button>
+        </div>
+      </div>
+
+      <aside class="hero-aside">
+        <p>Здесь можно показать ключевые метрики, форму или быстрый пример.</p>
+      </aside>
+    </section>
+
+    <section class="features" aria-label="Features">
+      <h2>Фичи</h2>
+      <div id="features" class="features-grid">
+        <article class="feature-card">
+          <h3>ИИ‑субтитры в реальном времени</h3>
+          <p>Позволяет автоматически расшифровывать аудио и выводить субтитры прямо во время лекции или разговора.</p>
+          <div class="feature-meta"><span class="pill">В разработке</span></div>
+        </article>
+        <article class="feature-card">
+          <h3>Режим учебы: конспектирование лекций</h3>
+          <p>Автоматическое составление кратких конспектов из записанной речи или видео.</p>
+          <div class="feature-meta"><span class="pill">Планируется</span></div>
+        </article>
+        <article class="feature-card">
+          <h3>Оповещения об опасных ситуациях</h3>
+          <p>Система сигналов и уведомлений при выявлении угроз или ЧС.</p>
+          <div class="feature-meta"><span class="pill">Идея</span></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
