@@ -9,14 +9,20 @@ import {
 import Landing from './src/components/Landing';
 import Auth from './src/components/Auth';
 
+// ── API base URL ─────────────────────────────────────────────────────
+// Dev  → http://localhost:8000  (uvicorn --reload)
+// Prod → https://hearless-backend.onrender.com  (update when deployed)
 const API = (() => {
   if (typeof window !== 'undefined') {
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    const { hostname } = window.location;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return 'http://localhost:8000';
     }
   }
+  // ⬇️  Change this to your actual Render/Railway backend URL before deploying
   return 'https://hearless15.onrender.com';
 })();
+
 
 // ——————————————————————————————————————————————
 // Constants & helpers
@@ -67,7 +73,7 @@ function App() {
 
   // === Subtitles (Browser STT) ===
   const [isListening, setIsListening] = useState(false);
-  const [srAvailable, setSrAvailable] = useState(!!SR);
+  const [srAvailable, setSrAvailable] = useState(true);
   const [srLang, setSrLang] = useState('ru-RU');
   const [subtitles, setSubtitles] = useState([
     { id: 0, text: "Система готова. Нажмите «Слушать» для старта.", timestamp: '—', isFinal: true }
@@ -162,124 +168,103 @@ function App() {
   // ——————————————————————————————————————————————
   // Browser SpeechRecognition — NO AI required
   // ——————————————————————————————————————————————
+  const wsRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+
   const startBrowserSTT = useCallback(() => {
-    if (!SR) {
-      console.warn('SpeechRecognition not supported');
-      setSrAvailable(false);
-      return;
-    }
-    if (srRef.current) return; // already running
+    if (wsRef.current || mediaRecorderRef.current) return;
+    
+    console.log('[STT] Starting Alem AI Audio STT for lang:', srLang);
 
-    console.log('[STT] Starting browser SpeechRecognition, lang:', srLang);
+    const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-    const rec = new SR();
-    // kk-KZ STT in browsers is broken — it outputs one word at a time as "final".
-    // Instead, listen in ru-RU (reliable) and let the AI translate to Kazakh.
-    rec.lang = srLang === 'kk-KZ' ? 'ru-RU' : srLang;
-    rec.continuous = true;   // never stops on silence
-    rec.interimResults = true;   // show partial results in real-time
-    rec.maxAlternatives = 1;
+    ws.onopen = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorderRef.current = mediaRecorder;
 
-    rec.onstart = () => {
-      console.log('[STT] Mic open, listening…');
-    };
-
-    rec.onresult = (event) => {
-      let interim = '';
-      let finalChunk = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalChunk += t;
-        } else {
-          interim += t;
-        }
-      }
-
-      // Show live typing
-      setInterimText(interim);
-
-      // Commit final sentence
-      if (finalChunk.trim()) {
-        const textToProcess = finalChunk.trim();
-        const newEntryId = Date.now();
-        const newEntry = {
-          id: newEntryId,
-          text: textToProcess,
-          timestamp: new Date().toLocaleTimeString(),
-          isFinal: true,
+        // FIX: Send END_CHUNK *immediately after* the audio blob in the same event.
+        // This guarantees the backend receives audio data BEFORE the END_CHUNK signal.
+        // Previously, a separate setInterval caused END_CHUNK to arrive before audio.
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data); // binary audio chunk
+            // END_CHUNK sent right after — WebSocket preserves order
+            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLang }));
+          }
         };
 
-        if (isAiTranslatingRef.current) {
-          newEntry.text = "⏳ " + textToProcess;
-          setSubtitles(prev => [...prev, newEntry].slice(-30));
-          
-          fetch(`${API}/api/translate-subtitle`, {
+        mediaRecorder.start(4000); // request data every 4 seconds
+      } catch (err) {
+        console.error('[STT] Mic Error:', err);
+        addSystemSubtitle('⛔ Доступ к микрофону запрещён.');
+        setIsListening(false);
+      }
+    };
+
+    ws.onmessage = async (event) => {
+      if (typeof event.data !== 'string') return;
+      if (event.data.startsWith('[')) return; // backend error messages
+      const rawText = event.data.trim();
+      if (!rawText) return;
+
+      // If AI translation is enabled, send text to translation endpoint
+      let displayText = rawText;
+      if (isAiTranslatingRef.current) {
+        try {
+          const r = await fetch(`${API}/api/translate-subtitle`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: textToProcess, target_lang: "kazakh" })
-          }).then(r => r.json()).then(d => {
-            setSubtitles(prev => prev.map(s => s.id === newEntryId ? { ...s, text: d.text } : s));
-            if (isRecordingRef.current) {
-              setLectureNotes(old => old + d.text + ' ');
-            }
-          }).catch(e => {
-            setSubtitles(prev => prev.map(s => s.id === newEntryId ? { ...s, text: textToProcess + " (ошибка перевода)" } : s));
-            if (isRecordingRef.current) {
-              setLectureNotes(old => old + textToProcess + ' ');
-            }
+            body: JSON.stringify({ text: rawText, target_lang: 'kazakh' })
           });
-        } else {
-          setSubtitles(prev => [...prev, newEntry].slice(-30));
-          if (isRecordingRef.current) {
-            setLectureNotes(old => old + textToProcess + ' ');
-          }
+          const d = await r.json();
+          if (d.text && d.text.trim()) displayText = d.text.trim();
+        } catch { /* fallback to original text */ }
+      }
+
+      const now = Date.now();
+      setSubtitles(prev => {
+        const last = prev[prev.length - 1];
+        if (last && !last.isSystem && (now - last.id < 6000)) {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...last, text: last.text + ' ' + displayText, id: now };
+          return updated;
         }
-
-        setInterimText('');
-        // Danger check (async, non-blocking)
-        checkDanger(textToProcess);
+        return [...prev, { id: now, text: displayText, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+      });
+      
+      if (isRecordingRef.current) {
+        setLectureNotes(old => old + displayText + ' ');
       }
+      
+      checkDanger(rawText);
     };
 
-    rec.onerror = (event) => {
-      console.error('[STT] Error:', event.error);
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        addSystemSubtitle('⛔ Доступ к микрофону запрещён. Разрешите в настройках браузера.');
-        setIsListening(false);
-        srRef.current = null;
-        return;
-      }
-      if (event.error === 'no-speech') return; // just silence — ok
-      // for any other error, restart automatically
-    };
-
-    rec.onend = () => {
-      console.log('[STT] onend, isListening:', isListeningRef.current);
-      setInterimText('');
-      srRef.current = null;
-      // Auto-restart if user hasn't pressed Stop
+    ws.onerror = (e) => console.error('[STT] WS Error', e);
+    ws.onclose = () => {
+      stopBrowserSTT();
       if (isListeningRef.current) {
-        console.log('[STT] Auto-restarting…');
-        setTimeout(startBrowserSTT, 200);
+        setTimeout(() => startBrowserSTT(), 1000);
       }
     };
-
-    try {
-      rec.start();
-      srRef.current = rec;
-    } catch (err) {
-      console.error('[STT] Could not start:', err);
-      srRef.current = null;
-    }
   }, [srLang]);
 
   const stopBrowserSTT = useCallback(() => {
-    console.log('[STT] Stopping…');
-    if (srRef.current) {
-      try { srRef.current.stop(); } catch { }
-      srRef.current = null;
+    console.log('[STT] Stopping Alem STT…');
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      try { mediaRecorderRef.current.stop(); } catch { }
+      mediaRecorderRef.current = null;
+    }
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ text: 'END' }));
+      }
+      wsRef.current.close();
+      wsRef.current = null;
     }
     setInterimText('');
   }, []);
@@ -297,10 +282,11 @@ function App() {
 
   const changeLang = (lang) => {
     setSrLang(lang);
-    // When KZ is selected, automatically enable AI translation (since we can't rely on kk-KZ STT)
+    // When KZ is selected, allow native Kazakh STT. 
+    // They can still manually toggle AI translation if they want Russian->Kazakh translation.
     if (lang === 'kk-KZ') {
-      setIsAiTranslating(true);
-      addSystemSubtitle('Қазақша режимі: микрофон орысша тыңдайды → ИИ қазақшаға аударады');
+      setIsAiTranslating(false);
+      addSystemSubtitle('Қазақша режимі: микрофон қазақша тыңдайды (Нативный распознаватель)');
     } else {
       setIsAiTranslating(false);
       addSystemSubtitle(`Язык изменён на: ${lang === 'ru-RU' ? 'Русский' : 'English'}`);
@@ -878,52 +864,16 @@ function App() {
         )}
       </main>
 
-      {/* ===== CSS-in-JS keyframes ===== */}
+      {/* Keyframe animations not covered by styles.css */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #f8fafc; color: #0f172a; -webkit-tap-highlight-color: transparent; }
-        @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.05);} }
-        @keyframes spin  { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
-        @keyframes wave { from{height: 10%;} to{height: 100%;} }
-        @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-
-        /* Mobile Styles */
+        @keyframes spin  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes wave  { from { height: 10%; } to { height: 100%; } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @media (max-width: 900px) {
-          .hlp-sidebar {
-            position: fixed;
-            left: -260px;
-            top: 60px;
-            bottom: 0;
-            z-index: 1100;
-            transition: left 0.3s ease;
-          }
-          .hlp-sidebar--open {
-            left: 0;
-          }
-          .hlp-mobile-header {
-            display: flex !important;
-          }
-          .hlp-brand-desktop {
-            display: none !important;
-          }
-          main {
-            padding: 5.5rem 1rem 1rem !important;
-          }
-          .hlp-main-grid {
-            grid-template-columns: 1fr !important;
-          }
+          .hlp-main-grid { grid-template-columns: 1fr !important; }
         }
-        
         @media (max-width: 600px) {
-          .sos-modal {
-            width: 95% !important;
-            padding: 2rem 1rem !important;
-          }
+          .sos-modal { width: 95% !important; padding: 2rem 1rem !important; }
           h1 { font-size: 1.5rem !important; }
         }
       `}</style>

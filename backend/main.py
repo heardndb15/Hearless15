@@ -28,19 +28,20 @@ logger = logging.getLogger("HearlessBackend")
 load_dotenv()
 
 app = FastAPI(
-    title="Hearless — Deaf Assist Backend",
-    description="Backend for AI-powered deaf assistance application",
-    version="1.1.0"
+    title="Hearless — AI Deaf Assist",
+    description="Backend for Hearless — AI-powered accessibility application for deaf users",
+    version="1.2.0"
 )
 
 # --- State ---
 client: Optional[AsyncOpenAI] = None
 
-ALEM_API_BASE = "https://api.alem.ai/v1"  # Вставьте сюда правильный URL от Alem AI, если он отличается
-ALEM_MODEL = "gpt-3.5-turbo"              # Вставьте сюда название модели Alem AI (например alem-llm или останется так)
+ALEM_API_BASE = os.getenv("ALEM_API_BASE", "https://api.alem.ai/v1")
+ALEM_MODEL    = os.getenv("ALEM_MODEL",    "gpt-3.5-turbo")
 
-openai_client = AsyncOpenAI(api_key="sk-mYDNZTwyeIDNezkbnQDo0g", base_url=ALEM_API_BASE)  # Initial translation
-openai_client_2 = AsyncOpenAI(api_key="sk-ZKbCPNdAQ7xs05QhK8kUxg", base_url=ALEM_API_BASE) # Precision & correction
+# Loaded lazily in startup so .env is guaranteed to be read first
+openai_client:   Optional[AsyncOpenAI] = None
+openai_client_2: Optional[AsyncOpenAI] = None
 
 alerts_store = []
 last_alert_time = {}  # For debouncing: {alert_type: timestamp}
@@ -96,22 +97,34 @@ def hash_pw(pw: str):
 # --- Startup ---
 @app.on_event("startup")
 async def startup_event():
-    global client
-    api_key = os.getenv("XAI_API_KEY")
-    if api_key and api_key.strip():
+    global client, openai_client, openai_client_2
+
+    # xAI Grok — used for danger detection, summarization, chat
+    xai_key = os.getenv("XAI_API_KEY", "").strip()
+    if xai_key:
         try:
-            client = AsyncOpenAI(
-                api_key=api_key.strip(),
-                base_url="https://api.x.ai/v1",
-            )
-            logger.info("✅ xAI (Grok) client initialized successfully!")
-            print("✅ Hearless: xAI Grok is READY")
+            client = AsyncOpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
+            logger.info("✅ xAI (Grok) client ready")
         except Exception as e:
-            logger.error(f"❌ xAI API client failed: {e}")
-            client = None
+            logger.error(f"❌ xAI client init failed: {e}")
     else:
-        logger.warning("⚠️ XAI_API_KEY not set in .env; AI features will stay in simulation mode")
-        print("⚠️ Hearless: xAI NOT configured. Check .env")
+        logger.warning("⚠️ XAI_API_KEY not set — summarization/danger-AI disabled")
+
+    # Alem AI — used for STT + Kazakh translation
+    alem_key_1 = os.getenv("ALEM_API_KEY_1", "").strip()
+    alem_key_2 = os.getenv("ALEM_API_KEY_2", "").strip()
+    if alem_key_1:
+        openai_client = AsyncOpenAI(api_key=alem_key_1, base_url=ALEM_API_BASE)
+        logger.info("✅ Alem AI client 1 (STT + translation) ready")
+    else:
+        logger.warning("⚠️ ALEM_API_KEY_1 not set — STT and Kazakh translation disabled")
+    if alem_key_2:
+        openai_client_2 = AsyncOpenAI(api_key=alem_key_2, base_url=ALEM_API_BASE)
+        logger.info("✅ Alem AI client 2 (translation refiner) ready")
+    else:
+        logger.warning("⚠️ ALEM_API_KEY_2 not set — translation refinement disabled")
+
+    logger.info(f"🚀 Hearless v1.2 started | xAI={'✅' if client else '❌'} | Alem={'✅' if openai_client else '❌'}")
 
 # ======================= HELPERS =======================
 
@@ -429,42 +442,79 @@ async def detect_danger(payload: dict):
     return {"is_dangerous": False}
 
 # --- STT WebSocket ---
+# Browser lang code → Whisper lang code
+LANG_MAP = {
+    "ru-RU": "ru",
+    "en-US": "en",
+    "kk-KZ": "kk",
+}
+
 @app.websocket("/ws/subtitles")
 async def ws_subtitles(websocket: WebSocket):
     await websocket.accept()
     logger.info("Subtitle WS Connected")
-    
+
     audio_buffer = bytearray()
-    
+    current_lang = "ru"   # default until client tells us otherwise
+
     try:
         while True:
-            # High-level receive
             message = await websocket.receive()
-            
+
             if "bytes" in message:
+                # Accumulate raw audio data
                 audio_buffer.extend(message["bytes"])
-            
+
             elif "text" in message:
                 txt_data = message["text"]
-                # Client sends END_CHUNK after a buffer
-                if "END_CHUNK" in txt_data:
-                    if len(audio_buffer) < 5000: # Ignore tiny noise
+
+                # Parse as JSON when possible (frontend sends {text, lang})
+                cmd = txt_data
+                try:
+                    parsed = json.loads(txt_data)
+                    cmd = parsed.get("text", "")
+                    lang_code = parsed.get("lang", "ru-RU")
+                    current_lang = LANG_MAP.get(lang_code, "ru")
+                except Exception:
+                    pass   # plain-text fallback ("END_CHUNK", "END")
+
+                if "END_CHUNK" in cmd:
+                    # Ignore very small buffers (silence / network jitter)
+                    if len(audio_buffer) < 1000:
+                        logger.debug(f"Buffer too small ({len(audio_buffer)} bytes), skipping")
                         audio_buffer.clear()
                         continue
-                        
-                    # Process current buffer
-                    if client:
-                        # FALLBACK: Grok doesn't support audio STT yet.
-                        # We keep this as a message for when clients still try to use the backend for STT.
-                        logger.info("Audio chunk received, but xAI (Grok) doesn't support STT. Skipping backend processing.")
-                        await websocket.send_text("[Backend: xAI doesn't support audio STT. Switch to Browser STT in settings.]")
+
+                    if openai_client:
+                        try:
+                            logger.info(f"Processing {len(audio_buffer)} bytes, lang={current_lang}")
+                            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_audio:
+                                tmp_audio.write(audio_buffer)
+                                tmp_audio_path = tmp_audio.name
+
+                            with open(tmp_audio_path, "rb") as audio_file:
+                                transcript = await openai_client.audio.transcriptions.create(
+                                    model="whisper-1",
+                                    file=audio_file,
+                                    language=current_lang   # use language chosen by user
+                                )
+
+                            os.remove(tmp_audio_path)
+
+                            if transcript.text and transcript.text.strip():
+                                logger.info(f"STT Transcript [{current_lang}]: {transcript.text}")
+                                await websocket.send_text(transcript.text)
+                        except Exception as e:
+                            logger.error(f"Alem STT Error: {e}")
+                            await websocket.send_text(f"[STT Error: {str(e)}]")
                     else:
-                        await websocket.send_text("[Simulation Mode: Voice Received]")
+                        await websocket.send_text("[Backend: Alem AI not configured]")
+
                     audio_buffer.clear()
-                
-                elif "END" in txt_data:
+
+                elif "END" in cmd:
                     break
-                    
+
     except WebSocketDisconnect:
         logger.info("Subtitle WS Disconnected")
     except Exception as e:
