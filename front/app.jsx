@@ -3,7 +3,7 @@ import {
   Ear, Bell, Flame, Car, MessageSquare,
   BookOpen, Mic, AlertTriangle, Phone,
   Square, User as UserIcon, LogOut, FileText, Loader2,
-  Wifi, WifiOff, Globe, Globe2, ChevronRight, Info
+  Wifi, WifiOff, Globe, Globe2, ChevronRight, Info, GraduationCap
 } from 'lucide-react';
 
 import Landing from './src/components/Landing';
@@ -31,6 +31,21 @@ const SUBTITLE_LANG_OPTIONS = [
   { code: 'ru-RU', label: 'Русский' },
   { code: 'en-US', label: 'English' },
   { code: 'kk-KZ', label: 'Қазақша' },
+];
+
+// ——————————————————————————————————————————————
+// Sign Language Data
+// ——————————————————————————————————————————————
+const SIGN_DATA = [
+  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль' },
+  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль' },
+  { id: 3, category: 'alphabet', label: 'В', icon: '🆎', sub: 'Дактиль' },
+  { id: 4, category: 'greetings', label: 'Привет', icon: '👋', sub: 'Приветствие' },
+  { id: 5, category: 'greetings', label: 'Спасибо', icon: '🙏', sub: 'Этикет' },
+  { id: 6, category: 'greetings', label: 'Пожалуйста', icon: '🙌', sub: 'Этикет' },
+  { id: 7, category: 'emergency', label: 'Помощь', icon: '🚑', sub: 'Важное' },
+  { id: 8, category: 'emergency', label: 'Опасно', icon: '⚠️', sub: 'Важное' },
+  { id: 9, category: 'common', label: 'Я тебя люблю', icon: '🤟', sub: 'Фраза' },
 ];
 
 const alertIcons = {
@@ -101,6 +116,16 @@ function App() {
   const [chatResponse, setChatResponse] = useState('');
   const [isChatting, setIsChatting] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [academyCategory, setAcademyCategory] = useState('all');
+  const [academySearch, setAcademySearch] = useState('');
+  
+  // === Academy Quiz ===
+  const [isQuizMode, setIsQuizMode] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState([]);
+  const [currQIdx, setCurrQIdx] = useState(0);
+  const [quizScore, setQuizScore] = useState(0);
+  const [quizFinished, setQuizFinished] = useState(false);
+  const [lastAnswerCorrect, setLastAnswerCorrect] = useState(null); // null, true, false
 
   // === Refs ===
   const subtitlesEndRef = useRef(null);
@@ -438,6 +463,47 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
+  // Sign Quiz Logic
+  // ——————————————————————————————————————————————
+  const startQuiz = () => {
+    const shuffled = [...SIGN_DATA].sort(() => 0.5 - Math.random()).slice(0, 5);
+    const questions = shuffled.map(correct => {
+      const others = SIGN_DATA
+        .filter(s => s.id !== correct.id)
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 3);
+      const options = [correct, ...others].sort(() => 0.5 - Math.random());
+      return { correct, options };
+    });
+    setQuizQuestions(questions);
+    setCurrQIdx(0);
+    setQuizScore(0);
+    setIsQuizMode(true);
+    setQuizFinished(false);
+    setLastAnswerCorrect(null);
+  };
+
+  const handleQuizAnswer = (selectedId) => {
+    const isCorrect = selectedId === quizQuestions[currQIdx].correct.id;
+    setLastAnswerCorrect(isCorrect);
+    if (isCorrect) setQuizScore(s => s + 1);
+
+    setTimeout(() => {
+      setLastAnswerCorrect(null);
+      if (currQIdx < quizQuestions.length - 1) {
+        setCurrQIdx(idx => idx + 1);
+      } else {
+        setQuizFinished(true);
+      }
+    }, 1000);
+  };
+
+  const resetQuiz = () => {
+    setIsQuizMode(false);
+    setQuizFinished(false);
+  };
+
+  // ——————————————————————————————————————————————
   // Render gates
   // ——————————————————————————————————————————————
   if (!currentUser && appState === 'landing') {
@@ -513,6 +579,7 @@ function App() {
           {[
             { tab: 'dashboard', icon: <MessageSquare size={18} />, label: 'Субтитры' },
             { tab: 'study', icon: <BookOpen size={18} />, label: 'Учёба' },
+            { tab: 'academy', icon: <GraduationCap size={18} />, label: 'Жестовый язык' },
             { tab: 'profile', icon: <UserIcon size={18} />, label: 'Профиль' },
           ].map(({ tab, icon, label }) => (
             <button key={tab}
@@ -810,6 +877,153 @@ function App() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ───── ACADEMY ───── */}
+        {activeTab === 'academy' && (
+          <div style={s.fadeIn}>
+            {!isQuizMode ? (
+              <>
+                <header style={s.pageHeader}>
+                  <div>
+                    <h1 style={s.h1}>Академия жестов</h1>
+                    <p style={s.sub}>Визуальный словарь для общения без границ</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Найти жест..." 
+                      value={academySearch}
+                      onChange={e => setAcademySearch(e.target.value)}
+                      style={{ ...s.input, width: '220px', padding: '0.65rem 1rem' }}
+                    />
+                    <button 
+                      onClick={startQuiz}
+                      style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #3b82f6, #2dd4bf)', border: 'none', padding: '0.75rem 1.5rem', borderRadius: '14px' }}>
+                      <Zap size={18} /> Тренажёр
+                    </button>
+                  </div>
+                </header>
+
+                <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2.5rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                  {[
+                    { id: 'all', label: 'Все' },
+                    { id: 'alphabet', label: 'Алфавит' },
+                    { id: 'greetings', label: 'Приветствия' },
+                    { id: 'emergency', label: 'Экстренные' },
+                    { id: 'common', label: 'Общие' },
+                  ].map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setAcademyCategory(cat.id)}
+                      style={{
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '12px',
+                        border: 'none',
+                        background: academyCategory === cat.id ? '#3b82f6' : '#fff',
+                        color: academyCategory === cat.id ? '#fff' : '#64748b',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '2rem' }}>
+                  {SIGN_DATA
+                    .filter(s => academyCategory === 'all' || s.category === academyCategory)
+                    .filter(s => s.label.toLowerCase().includes(academySearch.toLowerCase()))
+                    .map((item) => (
+                    <div key={item.id} className="hlp-feat-card" style={{ 
+                      background: '#fff', 
+                      borderRadius: '28px', 
+                      padding: '2.5rem 2rem', 
+                      textAlign: 'center',
+                      border: '1px solid #e2e8f0',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: '0 10px 40px rgba(0,0,0,0.03)',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{ fontSize: '4rem', marginBottom: '1.5rem', display: 'block' }}>{item.icon}</div>
+                      <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{item.label}</h3>
+                      <span style={{ color: '#3b82f6', background: '#eff6ff', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700 }}>{item.sub}</span>
+                      
+                      <div style={{ marginTop: '1.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '1rem' }}>
+                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Смотреть жест →</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{ maxWidth: '600px', margin: '2rem auto', textAlign: 'center' }}>
+                {!quizFinished ? (
+                  <div className="hlp-feat-card" style={{ background: '#fff', padding: '3rem', borderRadius: '32px', boxShadow: '0 20px 60px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                      <span style={{ fontWeight: 700, color: '#64748b' }}>Вопрос {currQIdx + 1} из {quizQuestions.length}</span>
+                      <button onClick={resetQuiz} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><Square size={20} /></button>
+                    </div>
+                    
+                    <div style={{ width: '100%', height: '8px', background: '#f1f5f9', borderRadius: '10px', marginBottom: '3rem', overflow: 'hidden' }}>
+                      <div style={{ width: `${((currQIdx + 1) / quizQuestions.length) * 100}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s' }}></div>
+                    </div>
+
+                    <div style={{ 
+                      fontSize: '8rem', 
+                      margin: '2rem 0',
+                      animation: lastAnswerCorrect === true ? 'pulse 0.5s' : 'none',
+                      color: lastAnswerCorrect === true ? '#10b981' : (lastAnswerCorrect === false ? '#ef4444' : '#0f172a')
+                    }}>
+                      {quizQuestions[currQIdx].correct.icon}
+                    </div>
+                    
+                    <h2 style={{ fontSize: '1.5rem', marginBottom: '2.5rem', color: '#64748b' }}>Что означает этот жест?</h2>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      {quizQuestions[currQIdx].options.map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => handleQuizAnswer(opt.id)}
+                          style={{
+                            padding: '1.25rem',
+                            borderRadius: '16px',
+                            border: '1px solid #e2e8f0',
+                            background: '#fff',
+                            fontWeight: 700,
+                            fontSize: '1.1rem',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            color: '#0f172a'
+                          }}
+                          className="hlp-quiz-opt"
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="hlp-feat-card" style={{ background: '#fff', padding: '4rem 2rem', borderRadius: '32px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '5rem', marginBottom: '1.5rem' }}>🏆</div>
+                    <h2 style={{ fontSize: '2.5rem', fontWeight: 900, marginBottom: '1rem' }}>Отличный результат!</h2>
+                    <p style={{ fontSize: '1.25rem', color: '#64748b', marginBottom: '2.5rem' }}>Ваш счёт: {quizScore} из {quizQuestions.length}</p>
+                    <button 
+                      onClick={resetQuiz}
+                      style={{ ...s.btnPrimary, margin: '0 auto', padding: '1rem 3rem', borderRadius: '50px' }}>
+                      Вернуться в библиотеку
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
