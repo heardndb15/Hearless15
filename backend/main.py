@@ -11,6 +11,7 @@ import aiosqlite
 import hashlib
 import time
 import asyncio
+import io
 from typing import List, Optional
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -488,22 +489,36 @@ async def ws_subtitles(websocket: WebSocket):
                     if openai_client:
                         try:
                             logger.info(f"Processing {len(audio_buffer)} bytes, lang={current_lang}")
-                            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_audio:
-                                tmp_audio.write(audio_buffer)
-                                tmp_audio_path = tmp_audio.name
+                            # Use in-memory buffer to avoid disk I/O lag
+                            audio_file = io.BytesIO(audio_buffer)
+                            audio_file.name = f"chunk_{int(time.time())}.webm"
 
-                            with open(tmp_audio_path, "rb") as audio_file:
-                                transcript = await openai_client.audio.transcriptions.create(
-                                    model="whisper-1",
-                                    file=audio_file,
-                                    language=current_lang   # use language chosen by user
-                                )
+                            transcript = await openai_client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=audio_file,
+                                language=current_lang   # use language chosen by user
+                            )
 
-                            os.remove(tmp_audio_path)
+                            final_text = transcript.text
+                            if final_text and final_text.strip():
+                                # Check if translation is requested via WebSocket message
+                                if parsed.get("translate"):
+                                    target_lang = parsed.get("target_lang", "kazakh")
+                                    try:
+                                        # Fast single-pass translation for real-time
+                                        resp = await openai_client.chat.completions.create(
+                                            model=ALEM_MODEL,
+                                            messages=[
+                                                {"role": "system", "content": f"You are a fast real-time translator. Translate the text to {target_lang}. Keep it natural and conversational. Return ONLY the translation, no quotes or notes."},
+                                                {"role": "user", "content": final_text}
+                                            ]
+                                        )
+                                        final_text = resp.choices[0].message.content.strip()
+                                    except Exception as te:
+                                        logger.error(f"WS Translation Error: {te}")
 
-                            if transcript.text and transcript.text.strip():
-                                logger.info(f"STT Transcript [{current_lang}]: {transcript.text}")
-                                await websocket.send_text(transcript.text)
+                                logger.info(f"STT Result: {final_text}")
+                                await websocket.send_text(final_text)
                         except Exception as e:
                             logger.error(f"Alem STT Error: {e}")
                             await websocket.send_text(f"[STT Error: {str(e)}]")

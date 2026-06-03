@@ -193,11 +193,16 @@ function App() {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
             ws.send(e.data); // binary audio chunk
             // END_CHUNK sent right after — WebSocket preserves order
-            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLang }));
+            ws.send(JSON.stringify({ 
+              text: 'END_CHUNK', 
+              lang: srLang,
+              translate: isAiTranslatingRef.current,
+              target_lang: 'kazakh' 
+            }));
           }
         };
 
-        mediaRecorder.start(4000); // request data every 4 seconds
+        mediaRecorder.start(2000); // request data every 2 seconds
       } catch (err) {
         console.error('[STT] Mic Error:', err);
         addSystemSubtitle('⛔ Доступ к микрофону запрещён.');
@@ -211,19 +216,8 @@ function App() {
       const rawText = event.data.trim();
       if (!rawText) return;
 
-      // If AI translation is enabled, send text to translation endpoint
-      let displayText = rawText;
-      if (isAiTranslatingRef.current) {
-        try {
-          const r = await fetch(`${API}/api/translate-subtitle`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: rawText, target_lang: 'kazakh' })
-          });
-          const d = await r.json();
-          if (d.text && d.text.trim()) displayText = d.text.trim();
-        } catch { /* fallback to original text */ }
-      }
+      // Text arriving from WS is already translated if requested
+      const displayText = rawText;
 
       const now = Date.now();
       setSubtitles(prev => {
