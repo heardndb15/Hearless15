@@ -3,8 +3,10 @@ import {
   Ear, Bell, Flame, Car, MessageSquare,
   BookOpen, Mic, AlertTriangle, Phone,
   Square, User as UserIcon, LogOut, FileText, Loader2,
-  Wifi, WifiOff, Globe, Globe2, ChevronRight, Info, GraduationCap
+  Wifi, WifiOff, Globe, Globe2, ChevronRight, Info, GraduationCap,
+  Zap, Camera, CheckCircle, Play, X
 } from 'lucide-react';
+
 
 import Landing from './src/components/Landing';
 import Auth from './src/components/Auth';
@@ -37,16 +39,20 @@ const SUBTITLE_LANG_OPTIONS = [
 // Sign Language Data
 // ——————————————————————————————————————————————
 const SIGN_DATA = [
-  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль' },
-  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль' },
-  { id: 3, category: 'alphabet', label: 'В', icon: '🆎', sub: 'Дактиль' },
-  { id: 4, category: 'greetings', label: 'Привет', icon: '👋', sub: 'Приветствие' },
-  { id: 5, category: 'greetings', label: 'Спасибо', icon: '🙏', sub: 'Этикет' },
-  { id: 6, category: 'greetings', label: 'Пожалуйста', icon: '🙌', sub: 'Этикет' },
-  { id: 7, category: 'emergency', label: 'Помощь', icon: '🚑', sub: 'Важное' },
-  { id: 8, category: 'emergency', label: 'Опасно', icon: '⚠️', sub: 'Важное' },
-  { id: 9, category: 'common', label: 'Я тебя люблю', icon: '🤟', sub: 'Фраза' },
+  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль', desc: 'Первая буква алфавита. Показывается сжатым кулаком с большим пальцем сбоку.' },
+  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль', desc: 'Ладонь открыта, большой палец прижат к ладони.' },
+  { id: 3, category: 'alphabet', label: 'В', icon: '🆎', sub: 'Дактиль', desc: 'Пальцы вместе, ладонь направлена вперед.' },
+  { id: 4, category: 'greetings', label: 'Привет', icon: '👋', sub: 'Приветствие', desc: 'Легкое покачивание ладонью у виска или просто приветственный жест.' },
+  { id: 5, category: 'greetings', label: 'Спасибо', icon: '🙏', sub: 'Этикет', desc: 'Касание подбородка кончиками пальцев и движение руки вперед.' },
+  { id: 6, category: 'greetings', label: 'Пожалуйста', icon: '🙌', sub: 'Этикет', desc: 'Круговое движение ладонью по груди.' },
+  { id: 7, category: 'emergency', label: 'Помощь', icon: '🚑', sub: 'Важное', desc: 'Одна рука кладется на другую, сжатую в кулак.' },
+  { id: 8, category: 'emergency', label: 'Опасно', icon: '⚠️', sub: 'Важное', desc: 'Резкое движение рукой вниз с напряженным выражением лица.' },
+  { id: 9, category: 'common', label: 'Я тебя люблю', icon: '🤟', sub: 'Фраза', desc: 'Классический жест: мизинец, указательный и большой пальцы вытянуты.' },
+  { id: 10, category: 'common', label: 'Дом', icon: '🏠', sub: 'Предмет', desc: 'Сложенные домиком ладони перед собой.' },
+  { id: 11, category: 'common', label: 'Семья', icon: '👨‍👩‍👧', sub: 'Люди', desc: 'Очерчивание круга двумя руками, начиная от груди.' },
+  { id: 12, category: 'common', label: 'Мир', icon: '🌍', sub: 'Слово', desc: 'Движение ладонями в разные стороны от центра.' },
 ];
+
 
 const alertIcons = {
   emergency: <Flame size={20} color="#ff4d4d" />,
@@ -121,11 +127,15 @@ function App() {
   
   // === Academy Quiz ===
   const [isQuizMode, setIsQuizMode] = useState(false);
+  const [isLearningMode, setIsLearningMode] = useState(false);
+  const [currentSign, setCurrentSign] = useState(null);
+  const [showCamera, setShowCamera] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState([]);
   const [currQIdx, setCurrQIdx] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
   const [quizFinished, setQuizFinished] = useState(false);
   const [lastAnswerCorrect, setLastAnswerCorrect] = useState(null); // null, true, false
+
 
   // === Refs ===
   const subtitlesEndRef = useRef(null);
@@ -498,10 +508,20 @@ function App() {
     }, 1000);
   };
 
+  const startLearning = (sign) => {
+    setCurrentSign(sign);
+    setIsLearningMode(true);
+    setIsQuizMode(false);
+  };
+
   const resetQuiz = () => {
     setIsQuizMode(false);
+    setIsLearningMode(false);
     setQuizFinished(false);
+    setCurrentSign(null);
+    setShowCamera(false);
   };
+
 
   // ——————————————————————————————————————————————
   // Render gates
@@ -883,7 +903,7 @@ function App() {
         {/* ───── ACADEMY ───── */}
         {activeTab === 'academy' && (
           <div style={s.fadeIn}>
-            {!isQuizMode ? (
+            {!isQuizMode && !isLearningMode ? (
               <>
                 <header style={s.pageHeader}>
                   <div>
@@ -940,29 +960,96 @@ function App() {
                     .filter(s => academyCategory === 'all' || s.category === academyCategory)
                     .filter(s => s.label.toLowerCase().includes(academySearch.toLowerCase()))
                     .map((item) => (
-                    <div key={item.id} className="hlp-feat-card" style={{ 
-                      background: '#fff', 
-                      borderRadius: '28px', 
-                      padding: '2.5rem 2rem', 
-                      textAlign: 'center',
-                      border: '1px solid #e2e8f0',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                      boxShadow: '0 10px 40px rgba(0,0,0,0.03)',
-                      position: 'relative',
-                      overflow: 'hidden'
-                    }}>
+                    <div key={item.id} className="hlp-feat-card" 
+                      onClick={() => startLearning(item)}
+                      style={{ 
+                        background: '#fff', 
+                        borderRadius: '28px', 
+                        padding: '2.5rem 2rem', 
+                        textAlign: 'center',
+                        border: '1px solid #e2e8f0',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 10px 40px rgba(0,0,0,0.03)',
+                        position: 'relative',
+                        overflow: 'hidden'
+                      }}>
                       <div style={{ fontSize: '4rem', marginBottom: '1.5rem', display: 'block' }}>{item.icon}</div>
                       <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{item.label}</h3>
                       <span style={{ color: '#3b82f6', background: '#eff6ff', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700 }}>{item.sub}</span>
                       
                       <div style={{ marginTop: '1.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '1rem' }}>
-                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Смотреть жест →</button>
+                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Изучить жест →</button>
                       </div>
                     </div>
                   ))}
                 </div>
               </>
+            ) : isLearningMode ? (
+              <div style={{ maxWidth: '900px', margin: '0 auto', animation: 'fadeIn 0.5s' }}>
+                <button onClick={resetQuiz} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', color: '#64748b', fontWeight: 600, cursor: 'pointer', marginBottom: '2rem' }}>
+                  <ChevronRight size={18} style={{ transform: 'rotate(180deg)' }} /> Назад в библиотеку
+                </button>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem' }}>
+                  {/* Left: Sign Info */}
+                  <div className="hlp-feat-card" style={{ background: '#fff', padding: '3rem', borderRadius: '32px', boxShadow: '0 20px 60px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                    <div style={{ fontSize: '8rem', marginBottom: '2rem' }}>{currentSign?.icon}</div>
+                    <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#0f172a', marginBottom: '1rem' }}>{currentSign?.label}</h2>
+                    <div style={{ display: 'inline-block', background: '#eff6ff', color: '#3b82f6', padding: '0.5rem 1.5rem', borderRadius: '50px', fontWeight: 700, marginBottom: '2rem' }}>{currentSign?.sub}</div>
+                    <p style={{ fontSize: '1.1rem', color: '#64748b', lineHeight: 1.6, textAlign: 'left', background: '#f8fafc', padding: '1.5rem', borderRadius: '20px', borderLeft: '4px solid #3b82f6' }}>
+                      {currentSign?.desc}
+                    </p>
+                    
+                    <button 
+                      onClick={() => setShowCamera(!showCamera)}
+                      style={{ ...s.btnPrimary, width: '100%', marginTop: '2.5rem', padding: '1rem', borderRadius: '16px', justifyContent: 'center' }}>
+                      {showCamera ? <><X size={20} /> Закрыть камеру</> : <><Camera size={20} /> Практиковать с камерой</>}
+                    </button>
+                  </div>
+
+                  {/* Right: Camera/Practice */}
+                  <div className="hlp-feat-card" style={{ background: '#0f172a', padding: '2rem', borderRadius: '32px', position: 'relative', display: 'flex', flexDirection: 'column', minHeight: '500px', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', zIndex: 10 }}>
+                      <h3 style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%' }}></div> Практика
+                      </h3>
+                      <div style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '10px', fontSize: '0.8rem' }}>AI Vision Active</div>
+                    </div>
+
+                    <div style={{ flex: 1, position: 'relative', borderRadius: '20px', overflow: 'hidden', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {showCamera ? (
+                        <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <p style={{ color: '#fff', opacity: 0.5 }}>[ Камера активна ]</p>
+                           {/* In a real implementation, we would use a <video> element here */}
+                           <div style={{ position: 'absolute', bottom: '20px', left: '20px', right: '20px', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', padding: '1rem', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                              <p style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>Покажите жест <strong>{currentSign?.label}</strong> в объектив</p>
+                           </div>
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '2rem' }}>
+                          <Camera size={48} color="#64748b" style={{ marginBottom: '1.5rem' }} />
+                          <p style={{ color: '#94a3b8' }}>Нажмите кнопку слева, чтобы<br />включить камеру и начать проверку</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div style={{ marginTop: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <button style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
+                        <Play size={18} /> Пример
+                      </button>
+                      <button 
+                        onClick={() => {
+                          alert(`Отлично! Жест "${currentSign.label}" выполнен верно!`);
+                          resetQuiz();
+                        }}
+                        style={{ background: '#10b981', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
+                        <CheckCircle size={18} /> Проверить
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             ) : (
               <div style={{ maxWidth: '600px', margin: '2rem auto', textAlign: 'center' }}>
                 {!quizFinished ? (
@@ -1027,6 +1114,7 @@ function App() {
           </div>
         )}
 
+
         {/* ───── PROFILE ───── */}
         {activeTab === 'profile' && (
           <div className="hlp-feat-card" style={{ ...s.fadeIn, maxWidth: '520px', margin: '0 auto', padding: '2.5rem', background: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
@@ -1074,9 +1162,11 @@ function App() {
 
       {/* Keyframe animations not covered by styles.css */}
       <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes spin  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes wave  { from { height: 10%; } to { height: 100%; } }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
         @media (max-width: 900px) {
           .hlp-main-grid { grid-template-columns: 1fr !important; }
         }
@@ -1128,7 +1218,7 @@ const s = {
   avatarFallback: { width: 84, height: 84, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #0ea5e9)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 800, color: '#fff', boxShadow: '0 10px 25px rgba(59, 130, 246, 0.3)' },
   settingLabel: { display: 'block', color: '#64748b', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.65rem' },
   input: { width: '100%', background: '#ffffff', border: '1px solid #e2e8f0', color: '#0f172a', padding: '1rem 1.25rem', borderRadius: '14px', fontSize: '1rem', fontFamily: 'inherit', outline: 'none', transition: 'border-color 0.2s' },
-  fadeIn: { animation: 'none' },
+  fadeIn: { animation: 'fadeIn 0.5s ease-out' },
 
   // SOS
   sosOverlay: { position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 },
