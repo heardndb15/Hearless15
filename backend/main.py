@@ -1,8 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
-import subprocess
 import json
 import logging
-import traceback
 import shutil
 import tempfile
 import os
@@ -12,7 +10,7 @@ import hashlib
 import time
 import asyncio
 import io
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +77,17 @@ def init_db():
                 longitude REAL,
                 timestamp TEXT,
                 user_id TEXT
+            )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS sign_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT,
+                sign_id INTEGER,
+                learned INTEGER DEFAULT 0,
+                times_practiced INTEGER DEFAULT 0,
+                last_practiced TEXT,
+                correct_count INTEGER DEFAULT 0,
+                wrong_count INTEGER DEFAULT 0,
+                UNIQUE(username, sign_id)
             )''')
             conn.commit()
             logger.info("Database initialized successfully")
@@ -234,6 +243,8 @@ def get_alerts():
 def post_alert(alert: dict):
     alert["id"] = alert.get("id", time.time())
     alerts_store.append(alert)
+    if len(alerts_store) > 100:
+        alerts_store[:] = alerts_store[-100:]
     return {"success": True}
 
 @app.post("/api/sos")
@@ -539,6 +550,164 @@ async def ws_subtitles(websocket: WebSocket):
             await websocket.close()
         except:
             pass
+
+# --- Sign Language Progress ---
+@app.get("/api/signs")
+async def list_signs():
+    """Return the full sign language dictionary with categories."""
+    return {"signs": [
+        {"id": 1, "category": "alphabet", "label": "А", "icon": "🅰️", "sub": "Дактиль", "desc": "Кулак, большой палец сбоку."},
+        {"id": 2, "category": "alphabet", "label": "Б", "icon": "🅱️", "sub": "Дактиль", "desc": "Ладонь раскрыта, большой палец прижат."},
+        {"id": 3, "category": "alphabet", "label": "В", "icon": "✌️", "sub": "Дактиль", "desc": "Указательный и средний пальцы вверх, остальные в кулак."},
+        {"id": 4, "category": "alphabet", "label": "Г", "icon": "🇬", "sub": "Дактиль", "desc": "Указательный палец вверх, остальные в кулак."},
+        {"id": 5, "category": "alphabet", "label": "Д", "icon": "🇩", "sub": "Дактиль", "desc": "Три пальца вверх: указательный, средний и безымянный."},
+        {"id": 6, "category": "alphabet", "label": "Е", "icon": "🇪", "sub": "Дактиль", "desc": "Пальцы сжаты, большой палец касается указательного."},
+        {"id": 7, "category": "alphabet", "label": "Ё", "icon": "🇪", "sub": "Дактиль", "desc": "Пальцы сжаты, большой у указательного, с движением в сторону."},
+        {"id": 8, "category": "alphabet", "label": "Ж", "icon": "🆖", "sub": "Дактиль", "desc": "Средний и безымянный скрещены, остальные в кулак."},
+        {"id": 9, "category": "alphabet", "label": "З", "icon": "🇿", "sub": "Дактиль", "desc": "Указательный палец рисует зигзаг."},
+        {"id": 10, "category": "alphabet", "label": "И", "icon": "🇮", "sub": "Дактиль", "desc": "Мизинец вверх, остальные в кулак."},
+        {"id": 11, "category": "alphabet", "label": "К", "icon": "🇰", "sub": "Дактиль", "desc": "Указательный и большой вверх, остальные в кулак."},
+        {"id": 12, "category": "alphabet", "label": "Л", "icon": "🇱", "sub": "Дактиль", "desc": "Ладонь раскрыта (буква L в дактиле)."},
+        {"id": 13, "category": "alphabet", "label": "М", "icon": "🇲", "sub": "Дактиль", "desc": "Большой палец прижат к мизинцу, остальные накрывают."},
+        {"id": 14, "category": "alphabet", "label": "Н", "icon": "🇳", "sub": "Дактиль", "desc": "Указательный и средний вниз, остальные в кулак."},
+        {"id": 15, "category": "alphabet", "label": "О", "icon": "🅾️", "sub": "Дактиль", "desc": "Все пальцы в кольцо с большим (жест ок)."},
+        {"id": 16, "category": "alphabet", "label": "П", "icon": "🇵", "sub": "Дактиль", "desc": "Ладонь раскрыта, пальцы вместе, направлена вперед."},
+        {"id": 17, "category": "alphabet", "label": "Р", "icon": "🇷", "sub": "Дактиль", "desc": "Указательный и средний скрещены, остальные в кулак."},
+        {"id": 18, "category": "alphabet", "label": "С", "icon": "🇨", "sub": "Дактиль", "desc": "Большой палец прикрывает сжатые пальцы сверху."},
+        {"id": 19, "category": "alphabet", "label": "Т", "icon": "🇹", "sub": "Дактиль", "desc": "Кулак, большой палец зажат внутри."},
+        {"id": 20, "category": "alphabet", "label": "У", "icon": "🇺", "sub": "Дактиль", "desc": "Указательный и мизинец вверх (коза)."},
+        {"id": 21, "category": "alphabet", "label": "Ф", "icon": "🇫", "sub": "Дактиль", "desc": "Большой палец упирается в указательный (кольцо), остальные раскрыты."},
+        {"id": 22, "category": "alphabet", "label": "Х", "icon": "🇭", "sub": "Дактиль", "desc": "Указательный и средний параллельно, ладонь вбок."},
+        {"id": 23, "category": "alphabet", "label": "Ц", "icon": "🇨", "sub": "Дактиль", "desc": "Указательный, средний, безымянный вверх, мизинец отведен."},
+        {"id": 24, "category": "alphabet", "label": "Ч", "icon": "4️⃣", "sub": "Дактиль", "desc": "Указательный и большой в кольцо, остальные вытянуты."},
+        {"id": 25, "category": "alphabet", "label": "Ш", "icon": "🇸", "sub": "Дактиль", "desc": "Четыре пальца вверх, большой прижат к ладони."},
+        {"id": 26, "category": "alphabet", "label": "Щ", "icon": "🇸", "sub": "Дактиль", "desc": "Четыре пальца вверх, большой отставлен."},
+        {"id": 27, "category": "alphabet", "label": "Ъ", "icon": "🇷", "sub": "Дактиль", "desc": "Сжатый кулак с резким движением вправо."},
+        {"id": 28, "category": "alphabet", "label": "Ы", "icon": "🇾", "sub": "Дактиль", "desc": "Указательный и мизинец вверх, большой поднят."},
+        {"id": 29, "category": "alphabet", "label": "Ь", "icon": "🇷", "sub": "Дактиль", "desc": "Кулак с мягким движением вниз."},
+        {"id": 30, "category": "alphabet", "label": "Э", "icon": "🇪", "sub": "Дактиль", "desc": "Указательный и средний скрещены, ладонь раскрыта."},
+        {"id": 31, "category": "alphabet", "label": "Ю", "icon": "🇺", "sub": "Дактиль", "desc": "Указательный и большой в кольцо, остальные вверх."},
+        {"id": 32, "category": "alphabet", "label": "Я", "icon": "🇾", "sub": "Дактиль", "desc": "Мизинец вперед, остальные в кулак."},
+        {"id": 33, "category": "numbers", "label": "Один", "icon": "1️⃣", "sub": "Цифры", "desc": "Указательный палец вверх, остальные в кулак."},
+        {"id": 34, "category": "numbers", "label": "Два", "icon": "2️⃣", "sub": "Цифры", "desc": "Указательный и средний вверх, остальные в кулак."},
+        {"id": 35, "category": "numbers", "label": "Три", "icon": "3️⃣", "sub": "Цифры", "desc": "Указательный, средний и безымянный вверх."},
+        {"id": 36, "category": "numbers", "label": "Четыре", "icon": "4️⃣", "sub": "Цифры", "desc": "Четыре пальца вверх, большой прижат к ладони."},
+        {"id": 37, "category": "numbers", "label": "Пять", "icon": "5️⃣", "sub": "Цифры", "desc": "Ладонь полностью раскрыта."},
+        {"id": 38, "category": "numbers", "label": "Шесть", "icon": "6️⃣", "sub": "Цифры", "desc": "Большой и мизинец соединены, остальные согнуты."},
+        {"id": 39, "category": "numbers", "label": "Семь", "icon": "7️⃣", "sub": "Цифры", "desc": "Большой, указательный и средний вверх (как птичка)."},
+        {"id": 40, "category": "numbers", "label": "Восемь", "icon": "8️⃣", "sub": "Цифры", "desc": "Большой и указательный в кольцо, остальные раскрыты."},
+        {"id": 41, "category": "numbers", "label": "Девять", "icon": "9️⃣", "sub": "Цифры", "desc": "Большой палец согнут, остальные в кулак."},
+        {"id": 42, "category": "numbers", "label": "Десять", "icon": "🔟", "sub": "Цифры", "desc": "Кулак, затем раскрытая ладонь (два движения)."},
+        {"id": 43, "category": "greetings", "label": "Привет", "icon": "👋", "sub": "Приветствие", "desc": "Легкое покачивание раскрытой ладонью."},
+        {"id": 44, "category": "greetings", "label": "До свидания", "icon": "🖐️", "sub": "Приветствие", "desc": "Покачивание ладонью с разведенными пальцами."},
+        {"id": 45, "category": "greetings", "label": "Спасибо", "icon": "🙏", "sub": "Этикет", "desc": "Касание подбородка кончиками пальцев и движение вперед."},
+        {"id": 46, "category": "greetings", "label": "Пожалуйста", "icon": "🤲", "sub": "Этикет", "desc": "Круговое движение раскрытой ладонью по груди."},
+        {"id": 47, "category": "greetings", "label": "Извините", "icon": "😔", "sub": "Этикет", "desc": "Кулак трет грудь круговыми движениями."},
+        {"id": 48, "category": "greetings", "label": "Как дела?", "icon": "🤷", "sub": "Вопросы", "desc": "Обе ладони раскрыты, движение от груди."},
+        {"id": 49, "category": "greetings", "label": "Хорошо", "icon": "👍", "sub": "Ответы", "desc": "Большой палец вверх, остальные в кулак."},
+        {"id": 50, "category": "greetings", "label": "Плохо", "icon": "👎", "sub": "Ответы", "desc": "Большой палец вниз, остальные в кулак."},
+        {"id": 51, "category": "emergency", "label": "Помощь", "icon": "🆘", "sub": "Важное", "desc": "Одна рука сжата в кулак, другая ложится сверху."},
+        {"id": 52, "category": "emergency", "label": "Опасно", "icon": "⚠️", "sub": "Важное", "desc": "Резкое движение рукой вниз с напряженным выражением."},
+        {"id": 53, "category": "emergency", "label": "Пожар", "icon": "🔥", "sub": "Важное", "desc": "Движение кистью вверх-вниз перед собой (имитация пламени)."},
+        {"id": 54, "category": "emergency", "label": "Врач", "icon": "🏥", "sub": "Важное", "desc": "Указательный палец рисует крест на лбу."},
+        {"id": 55, "category": "emergency", "label": "Полиция", "icon": "👮", "sub": "Важное", "desc": "Жест пистолета (указательный и большой вверх)."},
+        {"id": 56, "category": "emergency", "label": "Вызов", "icon": "📞", "sub": "Важное", "desc": "Жест телефон у уха или щеки."},
+        {"id": 57, "category": "common", "label": "Я тебя люблю", "icon": "🤟", "sub": "Фраза", "desc": "Мизинец, указательный и большой пальцы вытянуты."},
+        {"id": 58, "category": "common", "label": "Дом", "icon": "🏠", "sub": "Предмет", "desc": "Сложенные домиком ладони перед собой."},
+        {"id": 59, "category": "common", "label": "Семья", "icon": "👨‍👩‍👧", "sub": "Люди", "desc": "Очерчивание круга двумя руками от груди."},
+        {"id": 60, "category": "common", "label": "Мир", "icon": "☮️", "sub": "Слово", "desc": "Движение ладонями в разные стороны от центра."},
+        {"id": 61, "category": "common", "label": "Вода", "icon": "💧", "sub": "Предмет", "desc": "Рука сложена ковшиком у губ, движение вниз."},
+        {"id": 62, "category": "common", "label": "Еда", "icon": "🍽️", "sub": "Предмет", "desc": "Сложенная щепотью рука подносится ко рту."},
+        {"id": 63, "category": "common", "label": "Друг", "icon": "🤝", "sub": "Люди", "desc": "Обе руки сжимаются в рукопожатие перед собой."},
+        {"id": 64, "category": "common", "label": "Учиться", "icon": "📚", "sub": "Действие", "desc": "Раскрытая ладонь движется к голове."},
+        {"id": 65, "category": "common", "label": "Слышать", "icon": "👂", "sub": "Действие", "desc": "Указательный палец касается уха."},
+        {"id": 66, "category": "common", "label": "Говорить", "icon": "🗣️", "sub": "Действие", "desc": "Движение пальцами от губ вперед."},
+        {"id": 67, "category": "common", "label": "Понимать", "icon": "💡", "sub": "Действие", "desc": "Указательный палец касается виска."},
+        {"id": 68, "category": "common", "label": "Ждать", "icon": "⏳", "sub": "Действие", "desc": "Рука вытянута вперед, пальцы перебирают."},
+        {"id": 69, "category": "common", "label": "Идти", "icon": "🚶", "sub": "Действие", "desc": "Указательный и средний шагают по ладони."},
+        {"id": 70, "category": "common", "label": "Стоп", "icon": "🛑", "sub": "Действие", "desc": "Ладонь раскрыта, направлена вперед."},
+        {"id": 71, "category": "common", "label": "Красивый", "icon": "✨", "sub": "Качество", "desc": "Движение пальцами перед лицом (веер)."},
+        {"id": 72, "category": "common", "label": "Большой", "icon": "📏", "sub": "Качество", "desc": "Руки разводятся в стороны от груди."},
+        {"id": 73, "category": "colors", "label": "Красный", "icon": "🔴", "sub": "Цвет", "desc": "Круговое движение пальца у губ (как помада)."},
+        {"id": 74, "category": "colors", "label": "Синий", "icon": "🔵", "sub": "Цвет", "desc": "Ладонь сжата, движение вниз от подбородка."},
+        {"id": 75, "category": "colors", "label": "Зеленый", "icon": "🟢", "sub": "Цвет", "desc": "Сжатая кисть, движение от груди вперед."},
+        {"id": 76, "category": "colors", "label": "Желтый", "icon": "🟡", "sub": "Цвет", "desc": "Указательный палец крутит у виска."},
+        {"id": 77, "category": "colors", "label": "Белый", "icon": "⚪", "sub": "Цвет", "desc": "Ладонь от груди вниз, пальцы вместе."},
+        {"id": 78, "category": "colors", "label": "Черный", "icon": "⚫", "sub": "Цвет", "desc": "Указательный палец проводит по брови."},
+    ]}
+
+@app.post("/api/signs/progress")
+async def update_sign_progress(payload: dict):
+    """Update a user's progress on a specific sign."""
+    username = payload.get("username")
+    sign_id = payload.get("sign_id")
+    correct = payload.get("correct", True)
+    if not username or not sign_id:
+        raise HTTPException(status_code=400, detail="username and sign_id required")
+    try:
+        async with aiosqlite.connect("users.db", timeout=10) as conn:
+            await conn.execute(
+                """INSERT INTO sign_progress (username, sign_id, learned, times_practiced, last_practiced, correct_count, wrong_count)
+                   VALUES (?, ?, 1, 1, datetime('now'), ?, ?)
+                   ON CONFLICT(username, sign_id) DO UPDATE SET
+                       learned = 1,
+                       times_practiced = times_practiced + 1,
+                       last_practiced = datetime('now'),
+                       correct_count = correct_count + ?,
+                       wrong_count = wrong_count + ?""",
+                (username, sign_id, 1 if correct else 0, 0 if correct else 1, 1 if correct else 0, 0 if correct else 1)
+            )
+            await conn.commit()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Sign progress error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/signs/progress/{username}")
+async def get_sign_progress(username: str):
+    """Get all progress records for a user."""
+    try:
+        async with aiosqlite.connect("users.db", timeout=10) as conn:
+            async with conn.execute(
+                "SELECT sign_id, learned, times_practiced, last_practiced, correct_count, wrong_count FROM sign_progress WHERE username = ?",
+                (username,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return {"progress": [
+            {"sign_id": r[0], "learned": r[1], "times_practiced": r[2], "last_practiced": r[3], "correct_count": r[4], "wrong_count": r[5]}
+            for r in rows
+        ]}
+    except Exception as e:
+        logger.error(f"Get sign progress error: {e}")
+        return {"progress": []}
+
+@app.get("/api/signs/stats/{username}")
+async def get_sign_stats(username: str):
+    """Get aggregate learning statistics for a user."""
+    try:
+        async with aiosqlite.connect("users.db", timeout=10) as conn:
+            async with conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(times_practiced),0), COALESCE(SUM(correct_count),0), COALESCE(SUM(wrong_count),0) FROM sign_progress WHERE username = ?",
+                (username,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        learned = row[0] if row else 0
+        practiced = row[1] if row else 0
+        correct = row[2] if row else 0
+        wrong = row[3] if row else 0
+        total_attempts = correct + wrong
+        accuracy = round((correct / total_attempts) * 100, 1) if total_attempts > 0 else None
+        return {
+            "learned": learned,
+            "practiced": practiced,
+            "correct": correct,
+            "wrong": wrong,
+            "accuracy": accuracy,
+            "total": 78
+        }
+    except Exception as e:
+        logger.error(f"Get sign stats error: {e}")
+        return {"learned": 0, "practiced": 0, "correct": 0, "wrong": 0, "accuracy": None, "total": 78}
 
 if __name__ == "__main__":
     import uvicorn

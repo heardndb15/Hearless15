@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Ear, Bell, Flame, Car, MessageSquare,
+  Bell, Flame, MessageSquare,
   BookOpen, Mic, AlertTriangle, Phone,
   Square, User as UserIcon, LogOut, FileText, Loader2,
-  Wifi, WifiOff, Globe, Globe2, ChevronRight, Info, GraduationCap,
-  Zap, Camera, CheckCircle, Play, X
+  Wifi, Globe, ChevronRight, Info, GraduationCap,
+  Zap, Camera, CheckCircle, Play, X, Trophy, Repeat, ThumbsUp
 } from 'lucide-react';
 
 
@@ -36,21 +36,110 @@ const SUBTITLE_LANG_OPTIONS = [
 ];
 
 // ——————————————————————————————————————————————
+// Fisher-Yates shuffle
+// ——————————————————————————————————————————————
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ——————————————————————————————————————————————
 // Sign Language Data
 // ——————————————————————————————————————————————
 const SIGN_DATA = [
-  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль', desc: 'Первая буква алфавита. Показывается сжатым кулаком с большим пальцем сбоку.' },
-  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль', desc: 'Ладонь открыта, большой палец прижат к ладони.' },
-  { id: 3, category: 'alphabet', label: 'В', icon: '🆎', sub: 'Дактиль', desc: 'Пальцы вместе, ладонь направлена вперед.' },
-  { id: 4, category: 'greetings', label: 'Привет', icon: '👋', sub: 'Приветствие', desc: 'Легкое покачивание ладонью у виска или просто приветственный жест.' },
-  { id: 5, category: 'greetings', label: 'Спасибо', icon: '🙏', sub: 'Этикет', desc: 'Касание подбородка кончиками пальцев и движение руки вперед.' },
-  { id: 6, category: 'greetings', label: 'Пожалуйста', icon: '🙌', sub: 'Этикет', desc: 'Круговое движение ладонью по груди.' },
-  { id: 7, category: 'emergency', label: 'Помощь', icon: '🚑', sub: 'Важное', desc: 'Одна рука кладется на другую, сжатую в кулак.' },
-  { id: 8, category: 'emergency', label: 'Опасно', icon: '⚠️', sub: 'Важное', desc: 'Резкое движение рукой вниз с напряженным выражением лица.' },
-  { id: 9, category: 'common', label: 'Я тебя люблю', icon: '🤟', sub: 'Фраза', desc: 'Классический жест: мизинец, указательный и большой пальцы вытянуты.' },
-  { id: 10, category: 'common', label: 'Дом', icon: '🏠', sub: 'Предмет', desc: 'Сложенные домиком ладони перед собой.' },
-  { id: 11, category: 'common', label: 'Семья', icon: '👨‍👩‍👧', sub: 'Люди', desc: 'Очерчивание круга двумя руками, начиная от груди.' },
-  { id: 12, category: 'common', label: 'Мир', icon: '🌍', sub: 'Слово', desc: 'Движение ладонями в разные стороны от центра.' },
+  // --- Alphabet (A–Я) ---
+  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль', desc: 'Кулак, большой палец сбоку.', video: '' },
+  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль', desc: 'Ладонь раскрыта, большой палец прижат.', video: '' },
+  { id: 3, category: 'alphabet', label: 'В', icon: '✌️', sub: 'Дактиль', desc: 'Указательный и средний пальцы вверх, остальные в кулак.', video: '' },
+  { id: 4, category: 'alphabet', label: 'Г', icon: '🇬', sub: 'Дактиль', desc: 'Указательный палец вверх, остальные в кулак.', video: '' },
+  { id: 5, category: 'alphabet', label: 'Д', icon: '🇩', sub: 'Дактиль', desc: 'Три пальца вверх: указательный, средний и безымянный.', video: '' },
+  { id: 6, category: 'alphabet', label: 'Е', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой палец касается указательного.', video: '' },
+  { id: 7, category: 'alphabet', label: 'Ё', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой у указательного, с движением в сторону.', video: '' },
+  { id: 8, category: 'alphabet', label: 'Ж', icon: '🆖', sub: 'Дактиль', desc: 'Средний и безымянный скрещены, остальные в кулак.', video: '' },
+  { id: 9, category: 'alphabet', label: 'З', icon: '🇿', sub: 'Дактиль', desc: 'Указательный палец рисует зигзаг.', video: '' },
+  { id: 10, category: 'alphabet', label: 'И', icon: '🇮', sub: 'Дактиль', desc: 'Мизинец вверх, остальные в кулак.', video: '' },
+  { id: 11, category: 'alphabet', label: 'К', icon: '🇰', sub: 'Дактиль', desc: 'Указательный и большой вверх, остальные в кулак.', video: '' },
+  { id: 12, category: 'alphabet', label: 'Л', icon: '🇱', sub: 'Дактиль', desc: 'Ладонь раскрыта (буква L в дактиле).', video: '' },
+  { id: 13, category: 'alphabet', label: 'М', icon: '🇲', sub: 'Дактиль', desc: 'Большой палец прижат к мизинцу, остальные накрывают.', video: '' },
+  { id: 14, category: 'alphabet', label: 'Н', icon: '🇳', sub: 'Дактиль', desc: 'Указательный и средний вниз, остальные в кулак.', video: '' },
+  { id: 15, category: 'alphabet', label: 'О', icon: '🅾️', sub: 'Дактиль', desc: 'Все пальцы в кольцо с большим (жест "ок").', video: '' },
+  { id: 16, category: 'alphabet', label: 'П', icon: '🇵', sub: 'Дактиль', desc: 'Ладонь раскрыта, пальцы вместе, направлена вперёд.', video: '' },
+  { id: 17, category: 'alphabet', label: 'Р', icon: '🇷', sub: 'Дактиль', desc: 'Указательный и средний скрещены, остальные в кулак.', video: '' },
+  { id: 18, category: 'alphabet', label: 'С', icon: '🇨', sub: 'Дактиль', desc: 'Большой палец прикрывает сжатые пальцы сверху.', video: '' },
+  { id: 19, category: 'alphabet', label: 'Т', icon: '🇹', sub: 'Дактиль', desc: 'Кулак, большой палец зажат внутри.', video: '' },
+  { id: 20, category: 'alphabet', label: 'У', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, остальные в кулак ("коза").', video: '' },
+  { id: 21, category: 'alphabet', label: 'Ф', icon: '🇫', sub: 'Дактиль', desc: 'Большой палец упирается в указательный (кольцо), остальные раскрыты.', video: '' },
+  { id: 22, category: 'alphabet', label: 'Х', icon: '🇭', sub: 'Дактиль', desc: 'Указательный и средний параллельно, ладонь вбок.', video: '' },
+  { id: 23, category: 'alphabet', label: 'Ц', icon: '🇨', sub: 'Дактиль', desc: 'Указательный, средний, безымянный вверх, мизинец отведён.', video: '' },
+  { id: 24, category: 'alphabet', label: 'Ч', icon: '4️⃣', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вытянуты.', video: '' },
+  { id: 25, category: 'alphabet', label: 'Ш', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой прижат к ладони.', video: '' },
+  { id: 26, category: 'alphabet', label: 'Щ', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой отставлен.', video: '' },
+  { id: 27, category: 'alphabet', label: 'Ъ', icon: '🇷', sub: 'Дактиль', desc: 'Сжатый кулак с резким движением вправо.', video: '' },
+  { id: 28, category: 'alphabet', label: 'Ы', icon: '🇾', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, большой поднят.', video: '' },
+  { id: 29, category: 'alphabet', label: 'Ь', icon: '🇷', sub: 'Дактиль', desc: 'Кулак с мягким движением вниз.', video: '' },
+  { id: 30, category: 'alphabet', label: 'Э', icon: '🇪', sub: 'Дактиль', desc: 'Указательный и средний скрещены, ладонь раскрыта.', video: '' },
+  { id: 31, category: 'alphabet', label: 'Ю', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вверх.', video: '' },
+  { id: 32, category: 'alphabet', label: 'Я', icon: '🇾', sub: 'Дактиль', desc: 'Мизинец вперёд, остальные в кулак.', video: '' },
+
+  // --- Numbers ---
+  { id: 33, category: 'numbers', label: 'Один', icon: '1️⃣', sub: 'Цифры', desc: 'Указательный палец вверх, остальные в кулак.', video: '' },
+  { id: 34, category: 'numbers', label: 'Два', icon: '2️⃣', sub: 'Цифры', desc: 'Указательный и средний вверх, остальные в кулак.', video: '' },
+  { id: 35, category: 'numbers', label: 'Три', icon: '3️⃣', sub: 'Цифры', desc: 'Указательный, средний и безымянный вверх.', video: '' },
+  { id: 36, category: 'numbers', label: 'Четыре', icon: '4️⃣', sub: 'Цифры', desc: 'Четыре пальца вверх, большой прижат к ладони.', video: '' },
+  { id: 37, category: 'numbers', label: 'Пять', icon: '5️⃣', sub: 'Цифры', desc: 'Ладонь полностью раскрыта.', video: '' },
+  { id: 38, category: 'numbers', label: 'Шесть', icon: '6️⃣', sub: 'Цифры', desc: 'Большой и мизинец соединены, остальные согнуты.', video: '' },
+  { id: 39, category: 'numbers', label: 'Семь', icon: '7️⃣', sub: 'Цифры', desc: 'Большой, указательный и средний вверх (как птичка).', video: '' },
+  { id: 40, category: 'numbers', label: 'Восемь', icon: '8️⃣', sub: 'Цифры', desc: 'Большой и указательный в кольцо, остальные раскрыты.', video: '' },
+  { id: 41, category: 'numbers', label: 'Девять', icon: '9️⃣', sub: 'Цифры', desc: 'Большой палец согнут, остальные в кулак.', video: '' },
+  { id: 42, category: 'numbers', label: 'Десять', icon: '🔟', sub: 'Цифры', desc: 'Кулак, затем раскрытая ладонь (два движения).', video: '' },
+
+  // --- Greetings ---
+  { id: 43, category: 'greetings', label: 'Привет', icon: '👋', sub: 'Приветствие', desc: 'Легкое покачивание раскрытой ладонью.', video: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+  { id: 44, category: 'greetings', label: 'До свидания', icon: '🖐️', sub: 'Приветствие', desc: 'Покачивание ладонью с разведёнными пальцами.', video: '' },
+  { id: 45, category: 'greetings', label: 'Спасибо', icon: '🙏', sub: 'Этикет', desc: 'Касание подбородка кончиками пальцев и движение вперёд.', video: '' },
+  { id: 46, category: 'greetings', label: 'Пожалуйста', icon: '🤲', sub: 'Этикет', desc: 'Круговое движение раскрытой ладонью по груди.', video: '' },
+  { id: 47, category: 'greetings', label: 'Извините', icon: '😔', sub: 'Этикет', desc: 'Кулак трёт грудь круговыми движениями.', video: '' },
+  { id: 48, category: 'greetings', label: 'Как дела?', icon: '🤷', sub: 'Вопросы', desc: 'Обе ладони раскрыты, движение от груди.', video: '' },
+  { id: 49, category: 'greetings', label: 'Хорошо', icon: '👍', sub: 'Ответы', desc: 'Большой палец вверх, остальные в кулак.', video: '' },
+  { id: 50, category: 'greetings', label: 'Плохо', icon: '👎', sub: 'Ответы', desc: 'Большой палец вниз, остальные в кулак.', video: '' },
+
+  // --- Emergency ---
+  { id: 51, category: 'emergency', label: 'Помощь', icon: '🆘', sub: 'Важное', desc: 'Одна рука сжата в кулак, другая ложится сверху.', video: '' },
+  { id: 52, category: 'emergency', label: 'Опасно', icon: '⚠️', sub: 'Важное', desc: 'Резкое движение рукой вниз с напряжённым выражением.', video: '' },
+  { id: 53, category: 'emergency', label: 'Пожар', icon: '🔥', sub: 'Важное', desc: 'Движение кистью вверх-вниз перед собой (имитация пламени).', video: '' },
+  { id: 54, category: 'emergency', label: 'Врач', icon: '🏥', sub: 'Важное', desc: 'Указательный палец рисует крест на лбу.', video: '' },
+  { id: 55, category: 'emergency', label: 'Полиция', icon: '👮', sub: 'Важное', desc: 'Жест "пистолета" (указательный и большой вверх).', video: '' },
+  { id: 56, category: 'emergency', label: 'Вызов', icon: '📞', sub: 'Важное', desc: 'Жест "телефон" у уха или щеки.', video: '' },
+
+  // --- Common / Phrases ---
+  { id: 57, category: 'common', label: 'Я тебя люблю', icon: '🤟', sub: 'Фраза', desc: 'Мизинец, указательный и большой пальцы вытянуты.', video: '' },
+  { id: 58, category: 'common', label: 'Дом', icon: '🏠', sub: 'Предмет', desc: 'Сложенные домиком ладони перед собой.', video: '' },
+  { id: 59, category: 'common', label: 'Семья', icon: '👨‍👩‍👧', sub: 'Люди', desc: 'Очерчивание круга двумя руками от груди.', video: '' },
+  { id: 60, category: 'common', label: 'Мир', icon: '☮️', sub: 'Слово', desc: 'Движение ладонями в разные стороны от центра.', video: '' },
+  { id: 61, category: 'common', label: 'Вода', icon: '💧', sub: 'Предмет', desc: 'Рука сложена "ковшиком" у губ, движение вниз.', video: '' },
+  { id: 62, category: 'common', label: 'Еда', icon: '🍽️', sub: 'Предмет', desc: 'Сложенная "щепотью" рука подносится ко рту.', video: '' },
+  { id: 63, category: 'common', label: 'Друг', icon: '🤝', sub: 'Люди', desc: 'Обе руки сжимаются в рукопожатие перед собой.', video: '' },
+  { id: 64, category: 'common', label: 'Учиться', icon: '📚', sub: 'Действие', desc: 'Раскрытая ладонь движется к голове.', video: '' },
+  { id: 65, category: 'common', label: 'Слышать', icon: '👂', sub: 'Действие', desc: 'Указательный палец касается уха.', video: '' },
+  { id: 66, category: 'common', label: 'Говорить', icon: '🗣️', sub: 'Действие', desc: 'Движение пальцами от губ вперёд.', video: '' },
+  { id: 67, category: 'common', label: 'Понимать', icon: '💡', sub: 'Действие', desc: 'Указательный палец касается виска.', video: '' },
+  { id: 68, category: 'common', label: 'Ждать', icon: '⏳', sub: 'Действие', desc: 'Рука вытянута вперёд, пальцы перебирают.', video: '' },
+  { id: 69, category: 'common', label: 'Идти', icon: '🚶', sub: 'Действие', desc: 'Указательный и средний "шагают" по ладони.', video: '' },
+  { id: 70, category: 'common', label: 'Стоп', icon: '🛑', sub: 'Действие', desc: 'Ладонь раскрыта, направлена вперёд.', video: '' },
+  { id: 71, category: 'common', label: 'Красивый', icon: '✨', sub: 'Качество', desc: 'Движение пальцами перед лицом (веер).', video: '' },
+  { id: 72, category: 'common', label: 'Большой', icon: '📏', sub: 'Качество', desc: 'Руки разводятся в стороны от груди.', video: '' },
+
+  // --- Colors ---
+  { id: 73, category: 'colors', label: 'Красный', icon: '🔴', sub: 'Цвет', desc: 'Круговое движение пальца у губ (как помада).', video: '' },
+  { id: 74, category: 'colors', label: 'Синий', icon: '🔵', sub: 'Цвет', desc: 'Ладонь сжата, движение вниз от подбородка.', video: '' },
+  { id: 75, category: 'colors', label: 'Зелёный', icon: '🟢', sub: 'Цвет', desc: 'Сжатая кисть, движение от груди вперёд.', video: '' },
+  { id: 76, category: 'colors', label: 'Жёлтый', icon: '🟡', sub: 'Цвет', desc: 'Указательный палец крутит у виска.', video: '' },
+  { id: 77, category: 'colors', label: 'Белый', icon: '⚪', sub: 'Цвет', desc: 'Ладонь от груди вниз, пальцы вместе.', video: '' },
+  { id: 78, category: 'colors', label: 'Чёрный', icon: '⚫', sub: 'Цвет', desc: 'Указательный палец проводит по брови.', video: '' },
 ];
 
 
@@ -124,7 +213,28 @@ function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [academyCategory, setAcademyCategory] = useState('all');
   const [academySearch, setAcademySearch] = useState('');
+  const [signProgress, setSignProgress] = useState({});
+  const [signStats, setSignStats] = useState(null);
   
+  // Load sign progress from backend
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch(`${API}/api/signs/progress/${currentUser}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.progress) {
+          const map = {};
+          d.progress.forEach(p => { map[p.sign_id] = p; });
+          setSignProgress(map);
+        }
+      })
+      .catch(() => {});
+    fetch(`${API}/api/signs/stats/${currentUser}`)
+      .then(r => r.json())
+      .then(d => setSignStats(d))
+      .catch(() => {});
+  }, [currentUser]);
+
   // === Academy Quiz ===
   const [isQuizMode, setIsQuizMode] = useState(false);
   const [isLearningMode, setIsLearningMode] = useState(false);
@@ -137,9 +247,85 @@ function App() {
   const [lastAnswerCorrect, setLastAnswerCorrect] = useState(null); // null, true, false
 
 
+  // === Camera / MediaPipe ===
+  const cameraStreamRef = useRef(null);
+
+  useEffect(() => {
+    if (!showCamera) {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        cameraStreamRef.current = null;
+      }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        cameraStreamRef.current = stream;
+        const video = document.getElementById('sign-camera');
+        if (video) video.srcObject = stream;
+
+        // Load MediaPipe Hands from CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js';
+        await new Promise((resolve, reject) => { script.onload = resolve; script.onerror = reject; document.head.appendChild(script); });
+
+        const hands = new window.Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+        const canvas = document.getElementById('sign-canvas');
+        const ctx = canvas?.getContext('2d');
+
+        hands.onResults((results) => {
+          if (!ctx || !canvas || cancelled) return;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          if (results.multiHandLandmarks) {
+            for (const landmarks of results.multiHandLandmarks) {
+              drawHand(ctx, landmarks, canvas.width, canvas.height);
+            }
+          }
+        });
+
+        const sendToHands = async () => {
+          if (!cancelled && video && video.readyState >= 2) {
+            await hands.send({ image: video });
+            requestAnimationFrame(sendToHands);
+          }
+        };
+        requestAnimationFrame(sendToHands);
+      } catch (err) {
+        console.error('[Camera] Error:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showCamera]);
+
+  function drawHand(ctx, landmarks, w, h) {
+    const connections = [
+      [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20], [0,17]
+    ];
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 3;
+    for (const [i,j] of connections) {
+      ctx.beginPath();
+      ctx.moveTo(landmarks[i].x * w, landmarks[i].y * h);
+      ctx.lineTo(landmarks[j].x * w, landmarks[j].y * h);
+      ctx.stroke();
+    }
+    for (const lm of landmarks) {
+      ctx.beginPath();
+      ctx.arc(lm.x * w, lm.y * h, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+    }
+  }
+
   // === Refs ===
   const subtitlesEndRef = useRef(null);
-  const srRef = useRef(null);   // SpeechRecognition instance
   const isListeningRef = useRef(false);
   const isRecordingRef = useRef(false);
   const lectureNotesRef = useRef('');     // mirror for callbacks
@@ -311,13 +497,9 @@ function App() {
 
   const changeLang = (lang) => {
     setSrLang(lang);
-    // When KZ is selected, allow native Kazakh STT. 
-    // They can still manually toggle AI translation if they want Russian->Kazakh translation.
     if (lang === 'kk-KZ') {
-      setIsAiTranslating(false);
       addSystemSubtitle('Қазақша режимі: микрофон қазақша тыңдайды (Нативный распознаватель)');
     } else {
-      setIsAiTranslating(false);
       addSystemSubtitle(`Язык изменён на: ${lang === 'ru-RU' ? 'Русский' : 'English'}`);
     }
   };
@@ -475,14 +657,36 @@ function App() {
   // ——————————————————————————————————————————————
   // Sign Quiz Logic
   // ——————————————————————————————————————————————
-  const startQuiz = () => {
-    const shuffled = [...SIGN_DATA].sort(() => 0.5 - Math.random()).slice(0, 5);
-    const questions = shuffled.map(correct => {
-      const others = SIGN_DATA
-        .filter(s => s.id !== correct.id)
-        .sort(() => 0.5 - Math.random())
-        .slice(0, 3);
-      const options = [correct, ...others].sort(() => 0.5 - Math.random());
+  const startQuiz = (filterCategory) => {
+    let pool = SIGN_DATA;
+    if (filterCategory && filterCategory !== 'all') {
+      pool = SIGN_DATA.filter(s => s.category === filterCategory);
+    }
+    // Spaced repetition: weight unlearned / low-accuracy signs higher
+    const weighted = pool.map(s => {
+      const prog = signProgress[s.id];
+      if (!prog) return { sign: s, weight: 5 };        // never practiced → high weight
+      if (!prog.learned) return { sign: s, weight: 4 }; // not learned
+      const total = (prog.correct_count || 0) + (prog.wrong_count || 0);
+      const acc = total > 0 ? (prog.correct_count / total) : 0;
+      if (acc < 0.5) return { sign: s, weight: 3 };     // poor accuracy
+      if (acc < 0.8) return { sign: s, weight: 2 };     // OK accuracy
+      return { sign: s, weight: 1 };                     // mastered → low weight
+    });
+    // Weighted reservoir sampling (take 5)
+    const count = Math.min(5, pool.length);
+    const selected = [];
+    for (const {sign, weight} of weighted) {
+      const threshold = (selected.length + 1) / (selected.length + 1 + weight);
+      if (selected.length < count) {
+        selected.push(sign);
+      } else if (Math.random() < threshold) {
+        selected[Math.floor(Math.random() * count)] = sign;
+      }
+    }
+    const questions = shuffle(selected).map(correct => {
+      const others = shuffle(pool.filter(s => s.id !== correct.id)).slice(0, 3);
+      const options = shuffle([correct, ...others]);
       return { correct, options };
     });
     setQuizQuestions(questions);
@@ -493,12 +697,41 @@ function App() {
     setLastAnswerCorrect(null);
   };
 
+  const startWeakPractice = async () => {
+    if (!currentUser) return;
+    const res = await fetch(`${API}/api/signs/progress/${currentUser}`).then(r => r.json());
+    const weakIds = (res.progress || [])
+      .filter(p => {
+        const total = (p.correct_count || 0) + (p.wrong_count || 0);
+        const acc = total > 0 ? p.correct_count / total : 0;
+        return !p.learned || acc < 0.7;
+      })
+      .map(p => p.sign_id);
+    const weakSigns = SIGN_DATA.filter(s => weakIds.includes(s.id));
+    const pool = weakSigns.length >= 3 ? weakSigns : SIGN_DATA;
+    const questions = shuffle(pool).slice(0, 5).map(correct => {
+      const others = shuffle(SIGN_DATA.filter(s => s.id !== correct.id)).slice(0, 3);
+      return { correct, options: shuffle([correct, ...others]) };
+    });
+    setQuizQuestions(questions);
+    setCurrQIdx(0);
+    setQuizScore(0);
+    setIsQuizMode(true);
+    setQuizFinished(false);
+    setLastAnswerCorrect(null);
+  };
+
+  const [answerLocked, setAnswerLocked] = useState(false);
+
   const handleQuizAnswer = (selectedId) => {
+    if (answerLocked) return;
+    setAnswerLocked(true);
     const isCorrect = selectedId === quizQuestions[currQIdx].correct.id;
     setLastAnswerCorrect(isCorrect);
     if (isCorrect) setQuizScore(s => s + 1);
 
     setTimeout(() => {
+      setAnswerLocked(false);
       setLastAnswerCorrect(null);
       if (currQIdx < quizQuestions.length - 1) {
         setCurrQIdx(idx => idx + 1);
@@ -910,19 +1143,26 @@ function App() {
                     <h1 style={s.h1}>Академия жестов</h1>
                     <p style={s.sub}>Визуальный словарь для общения без границ</p>
                   </div>
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <input 
                       type="text" 
                       placeholder="Найти жест..." 
                       value={academySearch}
                       onChange={e => setAcademySearch(e.target.value)}
-                      style={{ ...s.input, width: '220px', padding: '0.65rem 1rem' }}
+                      style={{ ...s.input, width: '180px', padding: '0.65rem 1rem' }}
                     />
                     <button 
-                      onClick={startQuiz}
-                      style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #3b82f6, #2dd4bf)', border: 'none', padding: '0.75rem 1.5rem', borderRadius: '14px' }}>
-                      <Zap size={18} /> Тренажёр
+                      onClick={() => startQuiz(academyCategory)}
+                      style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #3b82f6, #2dd4bf)', border: 'none', padding: '0.75rem 1.25rem', borderRadius: '14px', fontSize: '0.9rem' }}>
+                      <Zap size={16} /> Тренажёр
                     </button>
+                    {currentUser && (
+                      <button 
+                        onClick={startWeakPractice}
+                        style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #f59e0b, #ef4444)', border: 'none', padding: '0.75rem 1.25rem', borderRadius: '14px', fontSize: '0.9rem' }}>
+                        <AlertTriangle size={16} /> Сложные
+                      </button>
+                    )}
                   </div>
                 </header>
 
@@ -930,9 +1170,11 @@ function App() {
                   {[
                     { id: 'all', label: 'Все' },
                     { id: 'alphabet', label: 'Алфавит' },
+                    { id: 'numbers', label: 'Цифры' },
                     { id: 'greetings', label: 'Приветствия' },
                     { id: 'emergency', label: 'Экстренные' },
                     { id: 'common', label: 'Общие' },
+                    { id: 'colors', label: 'Цвета' },
                   ].map(cat => (
                     <button
                       key={cat.id}
@@ -955,6 +1197,45 @@ function App() {
                   ))}
                 </div>
                 
+                {signStats && (
+                  <>
+                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#0f172a' }}>{signStats.learned || 0}<span style={{ fontSize: '0.9rem', color: '#94a3b8', fontWeight: 500 }}>/{signStats.total || SIGN_DATA.length}</span></div>
+                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Изучено жестов</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#0f172a' }}>{signStats.practiced || 0}</div>
+                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Всего практик</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: signStats.accuracy >= 80 ? '#10b981' : (signStats.accuracy >= 50 ? '#f59e0b' : '#ef4444') }}>
+                        {signStats.accuracy != null ? `${Math.round(signStats.accuracy)}%` : '—'}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Точность</div>
+                    </div>
+                  </div>
+                  {/* Per-category progress */}
+                  {currentUser && (
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
+                      {[['alphabet','Алфавит'], ['numbers','Цифры'], ['greetings','Приветствия'], ['emergency','Экстренные'], ['common','Общие'], ['colors','Цвета']].map(([catId, catLabel]) => {
+                        const total = SIGN_DATA.filter(s => s.category === catId).length;
+                        const learned = Object.entries(signProgress).filter(([sid, p]) => {
+                          const sign = SIGN_DATA.find(s => s.id === sid);
+                          return sign && sign.category === catId && p.learned;
+                        }).length;
+                        return (
+                          <div key={catId} style={{ width: 'calc(16.66% - 0.85rem)', minWidth: '100px', background: '#fff', padding: '0.75rem', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 800, color: learned === total ? '#10b981' : '#0f172a' }}>{learned}/{total}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.15rem' }}>{catLabel}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  </>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '2rem' }}>
                   {SIGN_DATA
                     .filter(s => academyCategory === 'all' || s.category === academyCategory)
@@ -967,19 +1248,22 @@ function App() {
                         borderRadius: '28px', 
                         padding: '2.5rem 2rem', 
                         textAlign: 'center',
-                        border: '1px solid #e2e8f0',
+                        border: signProgress[item.id]?.learned ? '1px solid #86efac' : '1px solid #e2e8f0',
                         cursor: 'pointer',
                         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                        boxShadow: '0 10px 40px rgba(0,0,0,0.03)',
+                        boxShadow: signProgress[item.id]?.learned ? '0 4px 20px rgba(34, 197, 94, 0.1)' : '0 10px 40px rgba(0,0,0,0.03)',
                         position: 'relative',
                         overflow: 'hidden'
                       }}>
+                      {signProgress[item.id]?.learned ? (
+                        <div style={{ position: 'absolute', top: '12px', right: '12px', background: '#22c55e', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '50px' }}>✓</div>
+                      ) : null}
                       <div style={{ fontSize: '4rem', marginBottom: '1.5rem', display: 'block' }}>{item.icon}</div>
                       <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{item.label}</h3>
                       <span style={{ color: '#3b82f6', background: '#eff6ff', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700 }}>{item.sub}</span>
                       
                       <div style={{ marginTop: '1.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '1rem' }}>
-                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Изучить жест →</button>
+                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Изучить →</button>
                       </div>
                     </div>
                   ))}
@@ -1001,6 +1285,19 @@ function App() {
                       {currentSign?.desc}
                     </p>
                     
+                    {currentSign?.video && (
+                      <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '14px', border: '1px solid #bbf7d0' }}>
+                        <a href={currentSign.video} target="_blank" rel="noopener noreferrer" style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none' }}>
+                          <Play size={16} /> Смотреть видео-пример
+                        </a>
+                      </div>
+                    )}
+                    {signProgress[currentSign?.id]?.learned ? (
+                      <div style={{ marginTop: '1rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '14px', border: '1px solid #bbf7d0', color: '#16a34a', fontWeight: 600, fontSize: '0.9rem', textAlign: 'center' }}>
+                        <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Жест изучен
+                      </div>
+                    ) : null}
+                    
                     <button 
                       onClick={() => setShowCamera(!showCamera)}
                       style={{ ...s.btnPrimary, width: '100%', marginTop: '2.5rem', padding: '1rem', borderRadius: '16px', justifyContent: 'center' }}>
@@ -1014,17 +1311,17 @@ function App() {
                       <h3 style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <div style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%' }}></div> Практика
                       </h3>
-                      <div style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '10px', fontSize: '0.8rem' }}>AI Vision Active</div>
+                      <div style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '10px', fontSize: '0.8rem' }}>AI Vision</div>
                     </div>
 
                     <div style={{ flex: 1, position: 'relative', borderRadius: '20px', overflow: 'hidden', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {showCamera ? (
-                        <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                           <p style={{ color: '#fff', opacity: 0.5 }}>[ Камера активна ]</p>
-                           {/* In a real implementation, we would use a <video> element here */}
-                           <div style={{ position: 'absolute', bottom: '20px', left: '20px', right: '20px', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', padding: '1rem', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
-                              <p style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>Покажите жест <strong>{currentSign?.label}</strong> в объектив</p>
-                           </div>
+                        <div style={{ position: 'absolute', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                          <video id="sign-camera" autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <canvas id="sign-canvas" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+                          <div style={{ position: 'absolute', bottom: '20px', left: '20px', right: '20px', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', padding: '1rem', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            <p style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>Покажите жест <strong>{currentSign?.label}</strong> в объектив</p>
+                          </div>
                         </div>
                       ) : (
                         <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -1035,16 +1332,30 @@ function App() {
                     </div>
                     
                     <div style={{ marginTop: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                      <button style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
-                        <Play size={18} /> Пример
+                      <button 
+                        onClick={async () => {
+                          if (!currentSign || !currentUser) return;
+                          await fetch(`${API}/api/signs/progress`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username: currentUser, sign_id: currentSign.id, correct: true })
+                          });
+                          const res = await fetch(`${API}/api/signs/progress/${currentUser}`).then(r => r.json());
+                          if (res.progress) {
+                            const map = {};
+                            res.progress.forEach(p => { map[p.sign_id] = p; });
+                            setSignProgress(map);
+                          }
+                          alert(`✅ Отлично! Жест "${currentSign.label}" отмечен как изученный!`);
+                        }}
+                        style={{ background: '#10b981', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
+                        <ThumbsUp size={18} /> Я знаю этот жест
                       </button>
                       <button 
                         onClick={() => {
-                          alert(`Отлично! Жест "${currentSign.label}" выполнен верно!`);
-                          resetQuiz();
+                          setShowCamera(true);
                         }}
-                        style={{ background: '#10b981', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
-                        <CheckCircle size={18} /> Проверить
+                        style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', padding: '1rem', borderRadius: '16px', fontWeight: 700, cursor: 'pointer' }}>
+                        <Camera size={18} /> Камера
                       </button>
                     </div>
                   </div>
