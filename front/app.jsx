@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Bell, Flame, MessageSquare,
+  Bell, Flame, MessageSquare, Car,
   BookOpen, Mic, AlertTriangle, Phone,
   Square, User as UserIcon, LogOut, FileText, Loader2,
   Wifi, Globe, ChevronRight, Info, GraduationCap,
-  Zap, Camera, CheckCircle, Play, X, Trophy, Repeat, ThumbsUp
+  Zap, Camera, CheckCircle, Play, X, ThumbsUp
 } from 'lucide-react';
 
 
@@ -673,17 +673,13 @@ function App() {
       if (acc < 0.8) return { sign: s, weight: 2 };     // OK accuracy
       return { sign: s, weight: 1 };                     // mastered → low weight
     });
-    // Weighted reservoir sampling (take 5)
+    // Weighted selection (higher weight = more likely to be chosen)
     const count = Math.min(5, pool.length);
-    const selected = [];
+    const expanded = [];
     for (const {sign, weight} of weighted) {
-      const threshold = (selected.length + 1) / (selected.length + 1 + weight);
-      if (selected.length < count) {
-        selected.push(sign);
-      } else if (Math.random() < threshold) {
-        selected[Math.floor(Math.random() * count)] = sign;
-      }
+      for (let i = 0; i < weight; i++) expanded.push(sign);
     }
+    const selected = shuffle(expanded).slice(0, count);
     const questions = shuffle(selected).map(correct => {
       const others = shuffle(pool.filter(s => s.id !== correct.id)).slice(0, 3);
       const options = shuffle([correct, ...others]);
