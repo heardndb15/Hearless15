@@ -145,24 +145,32 @@ async def elevenlabs_stt(audio_data: bytes, lang: str = "ru") -> str:
         logger.warning(f"Audio data too small: {len(audio_data)} bytes")
         return ""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as hx:
-            for ext, mime in [("audio.webm", "audio/webm"), ("audio.wav", "audio/wav"), ("audio.mp3", "audio/mpeg")]:
-                files = {"file": (ext, audio_data, mime)}
-                data = {"model_id": "scribe_v1", "language": api_lang}
-                resp = await hx.post(
-                    "https://api.elevenlabs.io/v1/speech-to-text",
-                    headers={"xi-api-key": elevenlabs_key},
-                    data=data,
-                    files=files,
-                )
-                if resp.status_code == 200:
-                    result = resp.json()
-                    text = result.get("text", "").strip()
-                    logger.info(f"ElevenLabs OK ({ext}): '{text[:80]}'")
-                    return text
-                else:
-                    logger.warning(f"ElevenLabs {ext} -> {resp.status_code}: {resp.text[:300]}")
-            return f"[STT Error: ни один формат не подошёл]"
+        ext_mime_list = [
+            ("audio.wav", "audio/wav"),
+            ("audio.mp3", "audio/mpeg"),
+            ("audio.webm", "audio/webm"),
+        ]
+        for ext, mime in ext_mime_list:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as hx:
+                    files = {"file": (ext, audio_data, mime)}
+                    resp = await hx.post(
+                        "https://api.elevenlabs.io/v1/speech-to-text",
+                        headers={"xi-api-key": elevenlabs_key},
+                        data={"language": api_lang},
+                        files=files,
+                    )
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        text = result.get("text", "").strip()
+                        logger.info(f"ElevenLabs OK ({ext}): '{text[:80]}'")
+                        return text
+                    else:
+                        body = resp.text[:400]
+                        logger.warning(f"ElevenLabs {ext} -> {resp.status_code}: {body}")
+            except Exception as e:
+                logger.error(f"ElevenLabs {ext} exception: {e}")
+        return "[STT Error: все форматы отклонены]"
     except Exception as e:
         logger.error(f"ElevenLabs STT exception: {e}")
         return f"[STT Error: {e}]"
@@ -204,48 +212,50 @@ async def ws_subtitles(websocket: WebSocket):
 
 @app.get("/api/stt/test")
 async def stt_test():
-    """Test ElevenLabs STT with a short audio file."""
-    import struct
+    """Test ElevenLabs STT with a synthetically generated audio file."""
     if not elevenlabs_key:
         return {"error": "ELEVENLABS_API_KEY not set"}
-    try:
-        # Create a tiny valid WAV file (silence, 0.1s, 8000Hz, mono, 16-bit)
-        sample_rate = 8000
-        duration = 0.1
-        num_samples = int(sample_rate * duration)
-        wav_bytes = bytearray()
-        wav_bytes.extend(b"RIFF")
-        data_size = num_samples * 2
-        wav_bytes.extend(struct.pack('<I', 36 + data_size))
-        wav_bytes.extend(b"WAVE")
-        wav_bytes.extend(b"fmt ")
-        wav_bytes.extend(struct.pack('<I', 16))
-        wav_bytes.extend(struct.pack('<H', 1))
-        wav_bytes.extend(struct.pack('<H', 1))
-        wav_bytes.extend(struct.pack('<I', sample_rate))
-        wav_bytes.extend(struct.pack('<I', sample_rate * 2))
-        wav_bytes.extend(struct.pack('<H', 2))
-        wav_bytes.extend(struct.pack('<H', 16))
-        wav_bytes.extend(b"data")
-        wav_bytes.extend(struct.pack('<I', data_size))
-        wav_bytes.extend(b'\x00\x00' * num_samples)
+    results = []
+    sample_rate = 44100
+    num_samples = int(sample_rate * 0.5)
+    # Generate a 440 Hz sine wave (0.5s, mono, 16-bit PCM)
+    wav_bytes = bytearray()
+    wav_bytes.extend(b"RIFF")
+    data_size = num_samples * 2
+    wav_bytes.extend(struct.pack('<I', 36 + data_size))
+    wav_bytes.extend(b"WAVE")
+    wav_bytes.extend(b"fmt ")
+    wav_bytes.extend(struct.pack('<I', 16))
+    wav_bytes.extend(struct.pack('<H', 1))
+    wav_bytes.extend(struct.pack('<H', 1))
+    wav_bytes.extend(struct.pack('<I', sample_rate))
+    wav_bytes.extend(struct.pack('<I', sample_rate * 2))
+    wav_bytes.extend(struct.pack('<H', 2))
+    wav_bytes.extend(struct.pack('<H', 16))
+    wav_bytes.extend(b"data")
+    wav_bytes.extend(struct.pack('<I', data_size))
+    import math
+    for i in range(num_samples):
+        val = int(math.sin(2 * math.pi * 440 * i / sample_rate) * 16000)
+        wav_bytes.extend(struct.pack('<h', val))
 
-        async with httpx.AsyncClient(timeout=15.0) as hx:
-            files = {"file": ("test.wav", bytes(wav_bytes), "audio/wav")}
-            data = {"model_id": "scribe_v1", "language": "ru"}
-            resp = await hx.post(
-                "https://api.elevenlabs.io/v1/speech-to-text",
-                headers={"xi-api-key": elevenlabs_key},
-                data=data,
-                files=files,
-            )
-        return {
-            "status": resp.status_code,
-            "body": resp.text[:500],
-            "headers": dict(resp.headers),
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    for ext, mime in [("test.wav", "audio/wav"), ("test.mp3", "audio/mpeg"), ("test.webm", "audio/webm")]:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as hx:
+                resp = await hx.post(
+                    "https://api.elevenlabs.io/v1/speech-to-text",
+                    headers={"xi-api-key": elevenlabs_key},
+                    data={"language": "en"},
+                    files={"file": (ext, bytes(wav_bytes), mime)},
+                )
+                results.append({
+                    "format": ext,
+                    "status": resp.status_code,
+                    "response": resp.text[:500],
+                })
+        except Exception as e:
+            results.append({"format": ext, "error": str(e)})
+    return {"elevenlabs_key": elevenlabs_key[:8] + "...", "tests": results}
 
 # ======================= ROUTES =======================
 
