@@ -1,7 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, HTTPException
 import logging
 import shutil
 import tempfile
@@ -12,9 +12,6 @@ import hashlib
 import time
 import asyncio
 import json
-import struct
-import aiohttp
-import math
 from typing import Optional
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -29,7 +26,6 @@ load_dotenv()
 app = FastAPI(title="Hearless Backend", version="2.0.0")
 
 client: Optional[AsyncOpenAI] = None
-elevenlabs_key: str = ""
 
 alerts_store = []
 last_alert_time = {}
@@ -59,7 +55,7 @@ def hash_pw(pw: str):
 
 @app.on_event("startup")
 async def startup_event():
-    global client, elevenlabs_key
+    global client
     xai_key = os.getenv("XAI_API_KEY", "").strip()
     if xai_key:
         try:
@@ -69,12 +65,7 @@ async def startup_event():
             logger.error(f"xAI init failed: {e}")
     else:
         logger.warning("XAI_API_KEY not set")
-    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-    if elevenlabs_key:
-        logger.info(f"ElevenLabs key loaded ({elevenlabs_key[:8]}...)")
-    else:
-        logger.warning("ELEVENLABS_API_KEY not set")
-    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'} | ElevenLabs={'yes' if elevenlabs_key else 'no'}")
+    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'}")
 
 # ======================= DIAGNOSTICS =======================
 
@@ -92,7 +83,6 @@ async def api_diagnose():
         "status": "ok",
         "db": db_ok,
         "xai_configured": client is not None,
-        "elevenlabs_configured": bool(elevenlabs_key),
         "alerts_count": len(alerts_store),
     }
 
@@ -127,139 +117,6 @@ async def verify_danger_with_ai(text: str) -> bool:
         logger.error(f"AI Danger Verification Error: {e}")
         # Fallback to keyword matching if AI fails
         return True 
-
-# ======================= ELEVENLABS STT =======================
-
-LANG_MAP = {
-    "ru-RU": "ru", "kk-KZ": "kk", "en-US": "en",
-    "ru": "ru", "kk": "kk", "en": "en",
-}
-
-async def elevenlabs_stt(audio_data: bytes, lang: str = "ru") -> str:
-    """Transcribe audio via ElevenLabs Scribe."""
-    if not elevenlabs_key:
-        logger.error("ElevenLabs key not configured")
-        return "[STT недоступен: ключ ElevenLabs не настроен]"
-    api_lang = LANG_MAP.get(lang, "ru")
-    logger.info(f"ElevenLabs STT: {len(audio_data)} bytes, lang={api_lang}")
-    if len(audio_data) < 100:
-        logger.warning(f"Audio too small: {len(audio_data)} bytes")
-        return ""
-
-    attempts = [
-        ("audio.wav", "audio/wav"),
-        ("audio.mp3", "audio/mpeg"),
-        ("audio.webm", "audio/webm"),
-    ]
-    for filename, content_type in attempts:
-        try:
-            async with aiohttp.ClientSession() as session:
-                form = aiohttp.FormData()
-                form.add_field("file", audio_data, filename=filename, content_type=content_type)
-                form.add_field("model_id", "scribe_v2")
-                form.add_field("language", api_lang)
-                async with session.post(
-                    "https://api.elevenlabs.io/v1/speech-to-text",
-                    headers={"xi-api-key": elevenlabs_key},
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    body = await resp.text()
-                    if resp.status == 200:
-                        result = json.loads(body)
-                        text = result.get("text", "").strip()
-                        logger.info(f"ElevenLabs OK ({filename}): '{text[:80]}'")
-                        return text
-                    else:
-                        logger.warning(f"ElevenLabs {filename} -> {resp.status}: {body[:400]}")
-        except asyncio.TimeoutError:
-            logger.error(f"ElevenLabs {filename} timeout")
-        except Exception as e:
-            logger.error(f"ElevenLabs {filename} exception: {e}")
-    return "[STT Error: все форматы отклонены]"
-
-# ======================= WEB / SUPPORT =======================
-
-@app.websocket("/ws/subtitles")
-async def ws_subtitles(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("WS client connected")
-    audio_buffer = bytearray()
-    try:
-        while True:
-            message = await websocket.receive()
-            if message.get("type") == "websocket.disconnect":
-                break
-            if "bytes" in message:
-                audio_buffer.extend(message["bytes"])
-            elif "text" in message:
-                try:
-                    data = json.loads(message["text"])
-                    if data.get("text") == "END_CHUNK":
-                        lang = data.get("lang", "ru-RU")
-                        text = ""
-                        if audio_buffer:
-                            text = await elevenlabs_stt(bytes(audio_buffer), lang)
-                            audio_buffer.clear()
-                        await websocket.send_json({"text": text})
-                except json.JSONDecodeError:
-                    pass
-    except WebSocketDisconnect:
-        logger.info("WS client disconnected")
-    except Exception as e:
-        logger.error(f"WS error: {e}")
-    finally:
-        audio_buffer.clear()
-
-# ======================= STT TEST =======================
-
-@app.get("/api/stt/test")
-async def stt_test():
-    """Test ElevenLabs STT with a synthetically generated audio file."""
-    if not elevenlabs_key:
-        return {"error": "ELEVENLABS_API_KEY not set"}
-    sample_rate = 44100
-    num_samples = int(sample_rate * 0.5)
-    wav_bytes = bytearray()
-    wav_bytes.extend(b"RIFF")
-    data_size = num_samples * 2
-    wav_bytes.extend(struct.pack('<I', 36 + data_size))
-    wav_bytes.extend(b"WAVE")
-    wav_bytes.extend(b"fmt ")
-    wav_bytes.extend(struct.pack('<I', 16))
-    wav_bytes.extend(struct.pack('<H', 1))
-    wav_bytes.extend(struct.pack('<H', 1))
-    wav_bytes.extend(struct.pack('<I', sample_rate))
-    wav_bytes.extend(struct.pack('<I', sample_rate * 2))
-    wav_bytes.extend(struct.pack('<H', 2))
-    wav_bytes.extend(struct.pack('<H', 16))
-    wav_bytes.extend(b"data")
-    wav_bytes.extend(struct.pack('<I', data_size))
-    for i in range(num_samples):
-        val = int(math.sin(2 * math.pi * 440 * i / sample_rate) * 16000)
-        wav_bytes.extend(struct.pack('<h', val))
-
-    results = []
-    for filename, content_type in [("test.wav", "audio/wav"), ("test.mp3", "audio/mpeg"), ("test.webm", "audio/webm")]:
-        try:
-            async with aiohttp.ClientSession() as session:
-                form = aiohttp.FormData()
-                form.add_field("file", bytes(wav_bytes), filename=filename, content_type=content_type)
-                form.add_field("model_id", "scribe_v2")
-                form.add_field("language", "en")
-                async with session.post(
-                    "https://api.elevenlabs.io/v1/speech-to-text",
-                    headers={"xi-api-key": elevenlabs_key},
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    body = await resp.text()
-                    results.append({"format": filename, "status": resp.status, "response": body[:500]})
-        except asyncio.TimeoutError:
-            results.append({"format": filename, "status": "timeout"})
-        except Exception as e:
-            results.append({"format": filename, "error": str(e)})
-    return {"elevenlabs_key_prefix": elevenlabs_key[:8] + "...", "tests": results}
 
 # ======================= ROUTES =======================
 

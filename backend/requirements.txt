@@ -6,4 +6,3 @@ pydantic
 python-multipart
 PyPDF2
 aiosqlite
-aiohttp

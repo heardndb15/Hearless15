@@ -20,22 +20,12 @@
 | Var | Provider | Used for |
 |-----|----------|----------|
 | `XAI_API_KEY` | xAI Grok (`grok-beta`) | danger detection, summarization, chat |
-| `ELEVENLABS_API_KEY` | ElevenLabs Scribe | speech-to-text (русский / қазақша / English) |
 
-### Sign language endpoints
+### Subtitles (STT)
 
-- `GET /api/signs` — full sign dictionary (78 signs, 7 categories)
-- `POST /api/signs/progress` — save practice result `{username, sign_id, correct}`
-- `GET /api/signs/progress/{username}` — per-sign progress
-- `GET /api/signs/stats/{username}` — aggregate stats (learned, accuracy)
-
-### WebSocket
-
-- `/ws/subtitles` — receives binary audio chunks (Blob from MediaRecorder) + JSON control messages (`{text: "END_CHUNK", lang: "ru-RU"}`)
-- Accumulates chunks in a buffer, sends to ElevenLabs Scribe on `END_CHUNK`
-- Sends back transcribed text
-- Language codes: `ru-RU` → `ru`, `kk-KZ` → `kk`, `en-US` → `en`
-- Frontend creates **self-contained 3s WebM chunks** (stops & restarts MediaRecorder per chunk) so ElevenLabs always receives a valid audio file with headers
+- Dashboard uses **browser SpeechRecognition API** (Web Speech) — no backend dependency
+- Languages: русский (`ru-RU`), қазақша (`kk-KZ`), English (`en-US`)
+- Recognized text sent to backend via HTTP for danger detection (xAI Grok)
 
 ### Test
 
