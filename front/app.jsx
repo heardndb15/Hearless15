@@ -200,6 +200,10 @@ function App() {
   // === Study / PDF ===
   const [isRecordingLecture, setIsRecordingLecture] = useState(false);
   const [lectureNotes, setLectureNotes] = useState('');
+  const [lectureSubtitles, setLectureSubtitles] = useState([]);
+  const [lectureLang, setLectureLang] = useState('ru-RU');
+  const [lectureDuration, setLectureDuration] = useState(0);
+  const lectureDurationTimer = useRef(null);
   const [pdfFile, setPdfFile] = useState(null);
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [pdfProgress, setPdfProgress] = useState('');
@@ -324,23 +328,46 @@ function App() {
     }
   }
 
-  // === Refs ===
+  // ── Shared mic stream (ref-counted) ──
+  const micStreamRef = useRef(null);
+  const micUsersRef = useRef(0);
+
+  const acquireMic = useCallback(async () => {
+    if (!micStreamRef.current) {
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    micUsersRef.current++;
+    return micStreamRef.current;
+  }, []);
+
+  const releaseMic = useCallback(() => {
+    micUsersRef.current--;
+    if (micUsersRef.current <= 0 && micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+      micUsersRef.current = 0;
+    }
+  }, []);
+
+  // ── Refs ──
   const subtitlesEndRef = useRef(null);
   const isListeningRef = useRef(false);
   const isRecordingRef = useRef(false);
-  const lectureNotesRef = useRef('');     // mirror for callbacks
+  const lectureNotesRef = useRef('');
+  const lectureWsRef = useRef(null);
+  const lectureRecorderRef = useRef(null);
+  const dashWsRef = useRef(null);
+  const dashRecorderRef = useRef(null);
+  const dashReconnectTimer = useRef(null);
 
-  // Keep refs in sync
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { isRecordingRef.current = isRecordingLecture; }, [isRecordingLecture]);
   useEffect(() => { lectureNotesRef.current = lectureNotes; }, [lectureNotes]);
   const isAiTranslatingRef = useRef(false);
   useEffect(() => { isAiTranslatingRef.current = isAiTranslating; }, [isAiTranslating]);
 
-  // Auto-scroll
   useEffect(() => { subtitlesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [subtitles, interimText]);
 
-  // Load SOS contact on login
   useEffect(() => {
     if (!currentUser) return;
     const s = localStorage.getItem(`sos_${currentUser}`);
@@ -348,8 +375,7 @@ function App() {
     fetch(`${API}/api/alerts`).then(r => r.json()).then(d => setAlerts(d.alerts || [])).catch(() => { });
   }, [currentUser]);
 
-  // Cleanup on unmount
-  useEffect(() => () => stopBrowserSTT(), []);
+  useEffect(() => () => { stopDashSTT(); stopLectureWS(); if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); } }, []);
 
   // ——————————————————————————————————————————————
   // Auth
@@ -377,7 +403,8 @@ function App() {
   };
 
   const handleLogout = () => {
-    stopBrowserSTT();
+    stopDashSTT();
+    stopLectureWS();
     setCurrentUser(null); 
     localStorage.removeItem('hearless_user');
     setAppState('landing');
@@ -387,122 +414,97 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
-  // Browser SpeechRecognition — NO AI required
+  // Dashboard STT — Alem AI WebSocket
   // ——————————————————————————————————————————————
-  const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const dashReconnectRef = useRef(0);
 
-  const startBrowserSTT = useCallback(() => {
-    if (wsRef.current || mediaRecorderRef.current) return;
-    
-    console.log('[STT] Starting Alem AI Audio STT for lang:', srLang);
+  const stopDashSTT = useCallback(() => {
+    if (dashReconnectTimer.current) { clearTimeout(dashReconnectTimer.current); dashReconnectTimer.current = null; }
+    if (dashRecorderRef.current) {
+      try { dashRecorderRef.current.stop(); } catch { }
+      dashRecorderRef.current = null;
+    }
+    if (dashWsRef.current) {
+      try { if (dashWsRef.current.readyState === WebSocket.OPEN) dashWsRef.current.send(JSON.stringify({ text: 'END' })); } catch { }
+      dashWsRef.current.close();
+      dashWsRef.current = null;
+    }
+    setInterimText('');
+  }, []);
+
+  const startDashSTT = useCallback(() => {
+    if (dashWsRef.current) return;
+    dashReconnectRef.current = 0;
 
     const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
     const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    dashWsRef.current = ws;
 
     ws.onopen = async () => {
+      dashReconnectRef.current = 0;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        mediaRecorderRef.current = mediaRecorder;
-
-        // FIX: Send END_CHUNK *immediately after* the audio blob in the same event.
-        // This guarantees the backend receives audio data BEFORE the END_CHUNK signal.
-        // Previously, a separate setInterval caused END_CHUNK to arrive before audio.
-        mediaRecorder.ondataavailable = (e) => {
+        const stream = await acquireMic();
+        const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        dashRecorderRef.current = mr;
+        mr.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data); // binary audio chunk
-            // END_CHUNK sent right after — WebSocket preserves order
-            ws.send(JSON.stringify({ 
-              text: 'END_CHUNK', 
-              lang: srLang,
-              translate: isAiTranslatingRef.current,
-              target_lang: 'kazakh' 
-            }));
+            ws.send(e.data);
+            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLang, translate: isAiTranslatingRef.current, target_lang: 'kazakh' }));
           }
         };
-
-        mediaRecorder.start(2000); // request data every 2 seconds
+        mr.start(2000);
       } catch (err) {
-        console.error('[STT] Mic Error:', err);
-        addSystemSubtitle('⛔ Доступ к микрофону запрещён.');
+        console.error('[Dash] Mic Error:', err);
+        addSystemSubtitle('⛔ Микрофон недоступен.');
         setIsListening(false);
       }
     };
 
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
       if (typeof event.data !== 'string') return;
-      if (event.data.startsWith('[')) return; // backend error messages
+      if (event.data.startsWith('[')) return;
       const rawText = event.data.trim();
       if (!rawText) return;
-
-      // Text arriving from WS is already translated if requested
-      const displayText = rawText;
-
       const now = Date.now();
       setSubtitles(prev => {
         const last = prev[prev.length - 1];
         if (last && !last.isSystem && (now - last.id < 6000)) {
           const updated = [...prev];
-          updated[updated.length - 1] = { ...last, text: last.text + ' ' + displayText, id: now };
+          updated[updated.length - 1] = { ...last, text: last.text + ' ' + rawText, id: now };
           return updated;
         }
-        return [...prev, { id: now, text: displayText, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+        return [...prev, { id: now, text: rawText, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
       });
-      
-      if (isRecordingRef.current) {
-        setLectureNotes(old => old + displayText + ' ');
-      }
-      
       checkDanger(rawText);
     };
 
-    ws.onerror = (e) => console.error('[STT] WS Error', e);
+    ws.onerror = (e) => console.error('[Dash] WS Error', e);
     ws.onclose = () => {
-      stopBrowserSTT();
+      releaseMic();
+      dashWsRef.current = null;
+      dashRecorderRef.current = null;
       if (isListeningRef.current) {
-        setTimeout(() => startBrowserSTT(), 1000);
+        const delay = Math.min(1000 * Math.pow(2, dashReconnectRef.current), 15000);
+        dashReconnectRef.current++;
+        dashReconnectTimer.current = setTimeout(() => startDashSTT(), delay);
       }
     };
-  }, [srLang]);
-
-  const stopBrowserSTT = useCallback(() => {
-    console.log('[STT] Stopping Alem STT…');
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
-      try { mediaRecorderRef.current.stop(); } catch { }
-      mediaRecorderRef.current = null;
-    }
-    if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ text: 'END' }));
-      }
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setInterimText('');
-  }, []);
-
-  // Start/stop when toggle OR language changes
-  useEffect(() => {
-    if (isListening) {
-      stopBrowserSTT();
-      startBrowserSTT();
-    } else {
-      stopBrowserSTT();
-    }
-    // eslint-disable-next-line
-  }, [isListening, srLang]);
+  }, [srLang, acquireMic, releaseMic]);
 
   const changeLang = (lang) => {
     setSrLang(lang);
-    if (lang === 'kk-KZ') {
-      addSystemSubtitle('Қазақша режимі: микрофон қазақша тыңдайды (Нативный распознаватель)');
-    } else {
-      addSystemSubtitle(`Язык изменён на: ${lang === 'ru-RU' ? 'Русский' : 'English'}`);
-    }
+    addSystemSubtitle(`Язык: ${lang === 'ru-RU' ? 'Русский' : lang === 'kk-KZ' ? 'Қазақша' : 'English'}`);
   };
+
+  // Start/stop listening
+  useEffect(() => {
+    if (isListening) {
+      stopDashSTT();
+      startDashSTT();
+    } else {
+      stopDashSTT();
+    }
+  }, [isListening, srLang]);
 
   // ——————————————————————————————————————————————
   // Helpers
@@ -588,15 +590,71 @@ function App() {
   // ——————————————————————————————————————————————
   // Study / Lecture
   // ——————————————————————————————————————————————
+  const startLectureWS = useCallback(() => {
+    if (lectureWsRef.current) return;
+    const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
+    const ws = new WebSocket(wsUrl);
+    lectureWsRef.current = ws;
+    ws.onopen = async () => {
+      try {
+        const stream = await acquireMic();
+        const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        lectureRecorderRef.current = mr;
+        mr.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data);
+            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: lectureLang, translate: false }));
+          }
+        };
+        mr.start(2000);
+      } catch (err) {
+        console.error('[Lecture] Mic Error:', err);
+        setIsRecordingLecture(false);
+        stopLectureWS();
+      }
+    };
+    ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') return;
+      if (event.data.startsWith('[')) return;
+      const text = event.data.trim();
+      if (!text) return;
+      const now = Date.now();
+      setLectureSubtitles(prev => [...prev.slice(-20), { id: now, text }]);
+      setLectureNotes(old => old + text + ' ');
+    };
+    ws.onerror = (e) => console.error('[Lecture] WS Error', e);
+    ws.onclose = () => {
+      releaseMic();
+      lectureWsRef.current = null;
+      lectureRecorderRef.current = null;
+    };
+  }, [lectureLang, API, acquireMic, releaseMic]);
+
+  const stopLectureWS = useCallback(() => {
+    if (lectureDurationTimer.current) { clearInterval(lectureDurationTimer.current); lectureDurationTimer.current = null; }
+    if (lectureRecorderRef.current) {
+      try { lectureRecorderRef.current.stop(); } catch { }
+      lectureRecorderRef.current = null;
+    }
+    releaseMic();
+    if (lectureWsRef.current) {
+      try { if (lectureWsRef.current.readyState === WebSocket.OPEN) lectureWsRef.current.send(JSON.stringify({ text: 'END' })); } catch { }
+      lectureWsRef.current.close();
+      lectureWsRef.current = null;
+    }
+  }, [releaseMic]);
+
   const toggleLecture = () => {
     if (!isRecordingLecture) {
       setIsRecordingLecture(true);
       setLectureNotes('');
-      setIsListening(true);
+      setLectureSubtitles([]);
+      setLectureDuration(0);
+      startLectureWS();
+      lectureDurationTimer.current = setInterval(() => setLectureDuration(d => d + 1), 1000);
     } else {
       setIsRecordingLecture(false);
-      setIsListening(false);
-      // Save
+      stopLectureWS();
       const notes = lectureNotesRef.current;
       if (notes.trim()) {
         fetch(`${API}/api/lectures`, {
@@ -1041,15 +1099,22 @@ function App() {
 
                 {/* Lecture recording */}
                 <div className="hlp-feat-card" style={{ padding: '2rem', background: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <h3 style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.65rem', fontWeight: 800, fontSize: '1.25rem' }}>
                       <div style={{ padding: '0.5rem', background: '#fef2f2', borderRadius: '12px', color: '#ef4444' }}><Mic size={20} /></div>
                       Запись лекции
                     </h3>
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <select
+                        value={lectureLang}
+                        onChange={e => setLectureLang(e.target.value)}
+                        style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '10px', fontSize: '0.85rem', fontWeight: 600, outline: 'none', cursor: 'pointer' }}
+                      >
+                        {SUBTITLE_LANG_OPTIONS.map(l => (<option key={l.code} value={l.code}>{l.label}</option>))}
+                      </select>
                       {lectureNotes && (
                         <button style={{ padding: '0.65rem 1.25rem', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0', color: '#0f172a', fontWeight: 600, cursor: 'pointer', display: 'flex', gap: '0.5rem' }} onClick={handleSummarize} disabled={isSummarizing}>
-                          {isSummarizing ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Саммари лекции'}
+                          {isSummarizing ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Саммари'}
                         </button>
                       )}
                       {isRecordingLecture ? (
@@ -1058,11 +1123,35 @@ function App() {
                         </button>
                       ) : (
                         <button style={{ padding: '0.65rem 1.25rem', borderRadius: '12px', background: '#0f172a', border: 'none', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', gap: '0.5rem' }} onClick={toggleLecture}>
-                          <Mic size={16} /> Начать запись
+                          <Mic size={16} /> Запись
                         </button>
                       )}
                     </div>
                   </div>
+
+                  {isRecordingLecture && (
+                    <div style={{ marginBottom: '1rem', padding: '0.5rem 1rem', background: '#fef2f2', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem', color: '#dc2626', fontWeight: 600 }}>
+                      <span style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%', animation: 'pulse 1.5s infinite' }}></span>
+                      Запись... {Math.floor(lectureDuration / 60)}:{String(lectureDuration % 60).padStart(2, '0')}
+                      <span style={{ color: '#64748b', fontWeight: 400 }}>|</span>
+                      <span style={{ color: '#64748b', fontWeight: 400 }}>{lectureNotes.split(/\s+/).filter(Boolean).length} слов</span>
+                    </div>
+                  )}
+
+                  {/* Live subtitles during recording */}
+                  {isRecordingLecture && (
+                    <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f1f5f9', borderRadius: '14px', maxHeight: '100px', overflowY: 'auto', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748b', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Распознаётся...</div>
+                      {lectureSubtitles.length === 0 ? (
+                        <p style={{ color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic', margin: 0 }}>Ожидание речи...</p>
+                      ) : (
+                        lectureSubtitles.slice(-3).map(s => (
+                          <p key={s.id} style={{ margin: '0.15rem 0', fontSize: '0.9rem', color: '#0f172a' }}>{s.text}</p>
+                        ))
+                      )}
+                    </div>
+                  )}
+
                   <textarea
                     value={lectureNotes}
                     onChange={e => setLectureNotes(e.target.value)}
