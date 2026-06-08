@@ -202,6 +202,8 @@ function App() {
   const [lectureNotes, setLectureNotes] = useState('');
   const [lectureSubtitles, setLectureSubtitles] = useState([]);
   const [lectureLang, setLectureLang] = useState('ru-RU');
+  const lectureLangRef = useRef('ru-RU');
+  useEffect(() => { lectureLangRef.current = lectureLang; }, [lectureLang]);
   const [lectureDuration, setLectureDuration] = useState(0);
   const lectureDurationTimer = useRef(null);
   const [pdfFile, setPdfFile] = useState(null);
@@ -417,6 +419,8 @@ function App() {
   // Dashboard STT — Alem AI WebSocket
   // ——————————————————————————————————————————————
   const dashReconnectRef = useRef(0);
+  const srLangRef = useRef(srLang);
+  useEffect(() => { srLangRef.current = srLang; }, [srLang]);
 
   const stopDashSTT = useCallback(() => {
     if (dashReconnectTimer.current) { clearTimeout(dashReconnectTimer.current); dashReconnectTimer.current = null; }
@@ -449,7 +453,7 @@ function App() {
         mr.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
             ws.send(e.data);
-            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLang, translate: isAiTranslatingRef.current, target_lang: 'kazakh' }));
+            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLangRef.current, translate: isAiTranslatingRef.current, target_lang: 'kazakh' }));
           }
         };
         mr.start(2000);
@@ -489,7 +493,7 @@ function App() {
         dashReconnectTimer.current = setTimeout(() => startDashSTT(), delay);
       }
     };
-  }, [srLang, acquireMic, releaseMic]);
+  }, [acquireMic, releaseMic]);
 
   const changeLang = (lang) => {
     setSrLang(lang);
@@ -504,7 +508,7 @@ function App() {
     } else {
       stopDashSTT();
     }
-  }, [isListening, srLang]);
+  }, [isListening, srLang, startDashSTT, stopDashSTT]);
 
   // ——————————————————————————————————————————————
   // Helpers
@@ -603,7 +607,7 @@ function App() {
         mr.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
             ws.send(e.data);
-            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: lectureLang, translate: false }));
+            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: lectureLangRef.current, translate: false }));
           }
         };
         mr.start(2000);
@@ -628,7 +632,7 @@ function App() {
       lectureWsRef.current = null;
       lectureRecorderRef.current = null;
     };
-  }, [lectureLang, API, acquireMic, releaseMic]);
+  }, [API, acquireMic, releaseMic]);
 
   const stopLectureWS = useCallback(() => {
     if (lectureDurationTimer.current) { clearInterval(lectureDurationTimer.current); lectureDurationTimer.current = null; }
