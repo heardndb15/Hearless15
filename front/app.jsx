@@ -189,7 +189,6 @@ function App() {
     { id: 0, text: "Система готова. Нажмите «Слушать» для старта.", timestamp: '—', isFinal: true }
   ]);
   const [interimText, setInterimText] = useState('');  // live typing text
-  const [isAiTranslating, setIsAiTranslating] = useState(false);
 
   // === Alerts ===
   const [alerts, setAlerts] = useState([]);
@@ -249,12 +248,11 @@ function App() {
     setIsDiagLoading(true);
     setDiagResult(null);
     try {
-      const [rootRes, diagRes, sttRes] = await Promise.all([
+      const [rootRes, diagRes] = await Promise.all([
         fetch(`${API}/`).then(r => r.json()).catch(() => ({ status: 'error', message: 'Backend недоступен' })),
         fetch(`${API}/api/diagnose`).then(r => r.json()).catch(() => ({ status: 'error', message: 'Backend недоступен' })),
-        fetch(`${API}/api/stt/test`).then(r => r.json()).catch(() => ({ ok: false, error: 'Backend недоступен' })),
       ]);
-      setDiagResult({ root: rootRes, diagnose: diagRes, stt: sttRes });
+      setDiagResult({ root: rootRes, diagnose: diagRes });
     } catch (err) {
       setDiagResult({ error: err.message });
     } finally {
@@ -351,43 +349,15 @@ function App() {
     }
   }
 
-  // ── Shared mic stream (ref-counted) ──
-  const micStreamRef = useRef(null);
-  const micUsersRef = useRef(0);
-
-  const acquireMic = useCallback(async () => {
-    if (!micStreamRef.current) {
-      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-    }
-    micUsersRef.current++;
-    return micStreamRef.current;
-  }, []);
-
-  const releaseMic = useCallback(() => {
-    micUsersRef.current--;
-    if (micUsersRef.current <= 0 && micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(t => t.stop());
-      micStreamRef.current = null;
-      micUsersRef.current = 0;
-    }
-  }, []);
-
   // ── Refs ──
   const subtitlesEndRef = useRef(null);
   const isListeningRef = useRef(false);
   const isRecordingRef = useRef(false);
   const lectureNotesRef = useRef('');
-  const lectureWsRef = useRef(null);
-  const lectureRecorderRef = useRef(null);
-  const dashWsRef = useRef(null);
-  const dashRecorderRef = useRef(null);
-  const dashReconnectTimer = useRef(null);
 
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { isRecordingRef.current = isRecordingLecture; }, [isRecordingLecture]);
   useEffect(() => { lectureNotesRef.current = lectureNotes; }, [lectureNotes]);
-  const isAiTranslatingRef = useRef(false);
-  useEffect(() => { isAiTranslatingRef.current = isAiTranslating; }, [isAiTranslating]);
 
   useEffect(() => { subtitlesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [subtitles, interimText]);
 
@@ -398,7 +368,7 @@ function App() {
     fetch(`${API}/api/alerts`).then(r => r.json()).then(d => setAlerts(d.alerts || [])).catch(() => { });
   }, [currentUser]);
 
-  useEffect(() => () => { stopDashSTT(); stopLectureWS(); if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); } }, []);
+  useEffect(() => () => { stopDashSTT(); stopLectureWS(); }, []);
 
   // ——————————————————————————————————————————————
   // Auth
@@ -427,7 +397,7 @@ function App() {
 
   const handleLogout = () => {
     stopDashSTT();
-    stopLectureWS();
+    stopLectureRecog();
     setCurrentUser(null); 
     localStorage.removeItem('hearless_user');
     setAppState('landing');
@@ -437,9 +407,8 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
-  // Dashboard STT — Browser SpeechRecognition (primary) + WebSocket (translation)
+  // Dashboard STT — Browser SpeechRecognition (zero-latency, no backend)
   // ——————————————————————————————————————————————
-  const dashReconnectRef = useRef(0);
   const srLangRef = useRef(srLang);
   useEffect(() => { srLangRef.current = srLang; }, [srLang]);
   const browserRecognitionRef = useRef(null);
@@ -449,146 +418,63 @@ function App() {
       try { browserRecognitionRef.current.abort(); } catch { }
       browserRecognitionRef.current = null;
     }
-    if (dashReconnectTimer.current) { clearTimeout(dashReconnectTimer.current); dashReconnectTimer.current = null; }
-    if (dashRecorderRef.current) {
-      try { dashRecorderRef.current.stop(); } catch { }
-      dashRecorderRef.current = null;
-    }
-    if (dashWsRef.current) {
-      try { if (dashWsRef.current.readyState === WebSocket.OPEN) dashWsRef.current.send(JSON.stringify({ text: 'END' })); } catch { }
-      dashWsRef.current.close();
-      dashWsRef.current = null;
-    }
-    if (micStreamRef.current) {
-      releaseMic();
-    }
     setInterimText('');
-  }, [releaseMic]);
+  }, []);
 
   const startDashSTT = useCallback(() => {
-    dashReconnectRef.current = 0;
-
-    // 1. Start browser SpeechRecognition (zero-latency, no backend)
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (Recognition) {
-      const recog = new Recognition();
-      recog.continuous = true;
-      recog.interimResults = false;
-      recog.lang = srLangRef.current;
-      browserRecognitionRef.current = recog;
-
-      recog.onresult = (event) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            const text = event.results[i][0].transcript.trim();
-            if (!text) continue;
-            const now = Date.now();
-            setSubtitles(prev => {
-              const last = prev[prev.length - 1];
-              if (last && !last.isSystem && (now - last.id < 6000)) {
-                const updated = [...prev];
-                updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
-                return updated;
-              }
-              return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
-            });
-            checkDanger(text);
-          }
-        }
-      };
-      recog.onerror = (event) => {
-        console.error('[Browser STT] Error:', event.error);
-        if (event.error === 'not-allowed') {
-          addSystemSubtitle('⛔ Нет доступа к микрофону');
-        } else if (event.error === 'no-speech') {
-          // silent — normal when user stops speaking
-        } else if (event.error === 'aborted') {
-          // expected when stopping
-        } else {
-          addSystemSubtitle(`⚠ Ошибка STT браузера: ${event.error}`);
-        }
-      };
-      recog.onend = () => {
-        if (isListeningRef.current && browserRecognitionRef.current) {
-          try { browserRecognitionRef.current.start(); } catch { }
-        }
-      };
-      try {
-        recog.start();
-        addSystemSubtitle('🟢 Браузерное STT запущено');
-      } catch (err) {
-        console.error('[Browser STT] Start error:', err);
-      }
-    } else {
+    if (!Recognition) {
       addSystemSubtitle('⚠ Браузер не поддерживает SpeechRecognition');
+      return;
     }
 
-    // 2. Connect WS for translation support (if Alem AI is available)
-    if (dashWsRef.current) return;
-    const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
-    const ws = new WebSocket(wsUrl);
-    dashWsRef.current = ws;
+    const recog = new Recognition();
+    recog.continuous = true;
+    recog.interimResults = false;
+    recog.lang = srLangRef.current;
+    browserRecognitionRef.current = recog;
 
-    ws.onopen = async () => {
-      dashReconnectRef.current = 0;
-      try {
-        const stream = await acquireMic();
-        const mt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-               : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
-               : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
-               : '';
-        const mr = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined);
-        dashRecorderRef.current = mr;
-        mr.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data);
-            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: srLangRef.current, translate: isAiTranslatingRef.current, target_lang: 'kazakh' }));
-          }
-        };
-        mr.start(2000);
-      } catch (err) {
-        console.error('[Dash] Mic Error:', err);
-        addSystemSubtitle('⛔ Микрофон недоступен.');
-        setIsListening(false);
-      }
-    };
-
-    ws.onmessage = (event) => {
-      if (typeof event.data !== 'string') return;
-      if (event.data.startsWith('[')) {
-        // Don't show backend errors for every chunk — only if it's critical
-        if (event.data.includes('not configured') || event.data.includes('все попытки')) {
-          addSystemSubtitle('⚠ Серверное STT недоступно, использую браузерное');
+    recog.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript.trim();
+          if (!text) continue;
+          const now = Date.now();
+          setSubtitles(prev => {
+            const last = prev[prev.length - 1];
+            if (last && !last.isSystem && (now - last.id < 6000)) {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
+              return updated;
+            }
+            return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+          });
+          checkDanger(text);
         }
-        return;
-      }
-      const rawText = event.data.trim();
-      if (!rawText) return;
-      // If translation is ON, show translated result; otherwise browser STT already shows text
-      if (isAiTranslatingRef.current) {
-        const now = Date.now();
-        setSubtitles(prev => {
-          const last = prev[prev.length - 1];
-          if (last && !last.isSystem && (now - last.id < 6000)) {
-            const updated = [...prev];
-            updated[updated.length - 1] = { ...last, text: last.text + ' ' + rawText, id: now };
-            return updated;
-          }
-          return [...prev, { id: now, text: rawText + ' (перевод)', timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
-        });
       }
     };
-
-    ws.onerror = (e) => {
-      console.error('[Dash] WS Error', e);
+    recog.onerror = (event) => {
+      console.error('[Browser STT] Error:', event.error);
+      if (event.error === 'not-allowed') {
+        addSystemSubtitle('⛔ Нет доступа к микрофону');
+      } else if (event.error === 'no-speech') {
+      } else if (event.error === 'aborted') {
+      } else {
+        addSystemSubtitle(`⚠ Ошибка STT браузера: ${event.error}`);
+      }
     };
-    ws.onclose = () => {
-      releaseMic();
-      dashWsRef.current = null;
-      dashRecorderRef.current = null;
-      // Don't reconnect WS by default — browser STT is already running
+    recog.onend = () => {
+      if (isListeningRef.current && browserRecognitionRef.current) {
+        try { browserRecognitionRef.current.start(); } catch { }
+      }
     };
-  }, [acquireMic, releaseMic]);
+    try {
+      recog.start();
+      addSystemSubtitle('🟢 Субтитры запущены');
+    } catch (err) {
+      console.error('[Browser STT] Start error:', err);
+    }
+  }, []);
 
   const changeLang = (lang) => {
     setSrLang(lang);
@@ -687,65 +573,45 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
-  // Study / Lecture
+  // Study / Lecture — Browser SpeechRecognition
   // ——————————————————————————————————————————————
-  const startLectureWS = useCallback(() => {
-    if (lectureWsRef.current) return;
-    const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
-    const ws = new WebSocket(wsUrl);
-    lectureWsRef.current = ws;
-    ws.onopen = async () => {
-      try {
-        const stream = await acquireMic();
-        const mt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-               : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
-               : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
-               : '';
-        const mr = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined);
-        lectureRecorderRef.current = mr;
-        mr.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data);
-            ws.send(JSON.stringify({ text: 'END_CHUNK', lang: lectureLangRef.current, translate: false }));
-          }
-        };
-        mr.start(2000);
-      } catch (err) {
-        console.error('[Lecture] Mic Error:', err);
-        setIsRecordingLecture(false);
-        stopLectureWS();
+  const lectureRecogRef = useRef(null);
+
+  const stopLectureRecog = useCallback(() => {
+    if (lectureRecogRef.current) {
+      try { lectureRecogRef.current.abort(); } catch { }
+      lectureRecogRef.current = null;
+    }
+  }, []);
+
+  const startLectureRecog = useCallback(() => {
+    stopLectureRecog();
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) return;
+    const recog = new Recognition();
+    recog.continuous = true;
+    recog.interimResults = false;
+    recog.lang = lectureLangRef.current;
+    lectureRecogRef.current = recog;
+    recog.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript.trim();
+          if (!text) continue;
+          const now = Date.now();
+          setLectureSubtitles(prev => [...prev.slice(-20), { id: now, text }]);
+          setLectureNotes(old => old + text + ' ');
+        }
       }
     };
-    ws.onmessage = (event) => {
-      if (typeof event.data !== 'string') return;
-      if (event.data.startsWith('[')) return;
-      const text = event.data.trim();
-      if (!text) return;
-      const now = Date.now();
-      setLectureSubtitles(prev => [...prev.slice(-20), { id: now, text }]);
-      setLectureNotes(old => old + text + ' ');
+    recog.onend = () => {
+      if (isRecordingRef.current && lectureRecogRef.current) {
+        try { lectureRecogRef.current.start(); } catch { }
+      }
     };
-    ws.onerror = (e) => console.error('[Lecture] WS Error', e);
-    ws.onclose = () => {
-      releaseMic();
-      lectureWsRef.current = null;
-      lectureRecorderRef.current = null;
-    };
-  }, [API, acquireMic, releaseMic]);
-
-  const stopLectureWS = useCallback(() => {
-    if (lectureDurationTimer.current) { clearInterval(lectureDurationTimer.current); lectureDurationTimer.current = null; }
-    if (lectureRecorderRef.current) {
-      try { lectureRecorderRef.current.stop(); } catch { }
-      lectureRecorderRef.current = null;
-    }
-    releaseMic();
-    if (lectureWsRef.current) {
-      try { if (lectureWsRef.current.readyState === WebSocket.OPEN) lectureWsRef.current.send(JSON.stringify({ text: 'END' })); } catch { }
-      lectureWsRef.current.close();
-      lectureWsRef.current = null;
-    }
-  }, [releaseMic]);
+    recog.onerror = () => {};
+    try { recog.start(); } catch (err) { console.error('[Lecture] STT error:', err); }
+  }, [stopLectureRecog]);
 
   const toggleLecture = () => {
     if (!isRecordingLecture) {
@@ -753,11 +619,12 @@ function App() {
       setLectureNotes('');
       setLectureSubtitles([]);
       setLectureDuration(0);
-      startLectureWS();
+      startLectureRecog();
       lectureDurationTimer.current = setInterval(() => setLectureDuration(d => d + 1), 1000);
     } else {
       setIsRecordingLecture(false);
-      stopLectureWS();
+      stopLectureRecog();
+      if (lectureDurationTimer.current) { clearInterval(lectureDurationTimer.current); lectureDurationTimer.current = null; }
       const notes = lectureNotesRef.current;
       if (notes.trim()) {
         fetch(`${API}/api/lectures`, {
@@ -1046,14 +913,6 @@ function App() {
                     ))}
                   </select>
                 </div>
-                
-                <div style={{ display: 'flex', alignItems: 'center', background: '#f8fafc', padding: '0.5rem 1rem', borderRadius: '12px', border: '1px solid #e2e8f0', gap: '8px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, color: '#0f172a' }}>
-                    <input type="checkbox" checked={isAiTranslating} onChange={e => setIsAiTranslating(e.target.checked)} style={{ cursor: 'pointer' }} />
-                    ИИ Перевод (KZ)
-                  </label>
-                </div>
-
                 <button
                   style={{ ...s.listenBtn, padding: '0.85rem 1.75rem', borderRadius: '16px', background: isListening ? '#ef4444' : '#0f172a' }}
                   onClick={() => setIsListening(!isListening)}
@@ -1647,7 +1506,7 @@ function App() {
             <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#eff6ff', borderRadius: '18px', fontSize: '0.95rem', color: '#1e40af', border: '1px solid #bfdbfe' }}>
               <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '1.05rem' }}><Info size={18} /> О субтитрах</strong>
               <div style={{ opacity: 0.9, lineHeight: 1.6 }}>
-                Субтитры работают через <strong>браузерный SpeechRecognition</strong> (мгновенно, без сервера) и через <strong>серверный STT</strong> (для перевода).<br /><br />
+                Субтитры работают через <strong>браузерный SpeechRecognition</strong> — мгновенно, без сервера, без задержек.<br /><br />
                 ✅ Браузер: Chrome, Safari, Edge, Opera.
               </div>
             </div>
@@ -1675,23 +1534,7 @@ function App() {
                         <>
                           <div style={{ color: diagResult.diagnose.db ? '#16a34a' : '#dc2626' }}>📦 БД: {diagResult.diagnose.db ? 'OK' : 'Ошибка'}</div>
                           <div style={{ color: diagResult.diagnose.xai_configured ? '#16a34a' : '#ca8a04' }}>🤖 xAI: {diagResult.diagnose.xai_configured ? 'Готов' : 'Не настроен'}</div>
-                          <div style={{ color: diagResult.diagnose.alem_configured ? '#16a34a' : '#ca8a04' }}>🎤 Alem AI: {diagResult.diagnose.alem_configured ? 'Готов' : 'Не настроен'}</div>
-                          <div style={{ color: '#475569' }}>🔗 Alem URL: {diagResult.diagnose.alem_base_url}</div>
                         </>
-                      )}
-                      {diagResult.stt && (
-                        <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '10px' }}>
-                          {diagResult.stt.ok ? (
-                            <div style={{ color: '#16a34a' }}>🎙 STT тест: OK</div>
-                          ) : (
-                            <div style={{ color: '#dc2626' }}>🎙 STT тест: Ошибка — {diagResult.stt.error || diagResult.stt.results?.map(r => `${r.base_url}: ${r.reachable ? 'OK' : r.error}`).join('; ')}</div>
-                          )}
-                          {diagResult.stt.results?.map((r, i) => (
-                            <div key={i} style={{ color: r.reachable ? '#16a34a' : '#dc2626', marginLeft: '1rem', fontSize: '0.8rem' }}>
-                              {r.reachable ? '✅' : '❌'} {r.base_url}: {r.reachable ? `${r.models_count} моделей` : r.error}
-                            </div>
-                          ))}
-                        </div>
                       )}
                     </>
                   )}
