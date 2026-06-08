@@ -156,6 +156,7 @@ async def elevenlabs_stt(audio_data: bytes, lang: str = "ru") -> str:
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
                 form.add_field("file", audio_data, filename=filename, content_type=content_type)
+                form.add_field("model_id", "scribe_v2")
                 form.add_field("language", api_lang)
                 async with session.post(
                     "https://api.elevenlabs.io/v1/speech-to-text",
@@ -244,6 +245,7 @@ async def stt_test():
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
                 form.add_field("file", bytes(wav_bytes), filename=filename, content_type=content_type)
+                form.add_field("model_id", "scribe_v2")
                 form.add_field("language", "en")
                 async with session.post(
                     "https://api.elevenlabs.io/v1/speech-to-text",
