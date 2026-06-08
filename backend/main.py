@@ -30,7 +30,11 @@ client: Optional[AsyncOpenAI] = None
 openai_client: Optional[AsyncOpenAI] = None
 openai_client_2: Optional[AsyncOpenAI] = None
 
-ALEM_API_BASE = os.getenv("ALEM_API_BASE", "https://api.alem.ai/v1")
+ALEM_API_BASE = os.getenv("ALEM_API_BASE", "https://llm.alem.ai/v1")
+ALEM_FALLBACK_BASES = [
+    "https://llm.alem.ai/v1",
+    "https://api.alem.ai/v1",
+]
 ALEM_MODEL = os.getenv("ALEM_MODEL", "gpt-3.5-turbo")
 
 alerts_store = []
@@ -80,6 +84,52 @@ async def startup_event():
         openai_client_2 = AsyncOpenAI(api_key=alem_key_2, base_url=ALEM_API_BASE)
         logger.info("Alem AI client 2 ready")
     logger.info(f"Hearless v1.3 | xAI={'yes' if client else 'no'} | Alem={'yes' if openai_client else 'no'}")
+
+# ======================= DIAGNOSTICS =======================
+
+@app.get("/api/diagnose")
+async def api_diagnose():
+    """Comprehensive service health check."""
+    db_ok = False
+    try:
+        async with aiosqlite.connect("users.db", timeout=5) as conn:
+            await conn.execute("SELECT 1")
+            db_ok = True
+    except Exception as e:
+        logger.error(f"DB diagnose error: {e}")
+    alem_base = os.getenv("ALEM_API_BASE", ALEM_API_BASE)
+    return {
+        "status": "ok",
+        "db": db_ok,
+        "xai_configured": client is not None,
+        "alem_configured": openai_client is not None or openai_client_2 is not None,
+        "alem_base_url": alem_base,
+        "alem_fallback_bases": ALEM_FALLBACK_BASES,
+        "alem_model": ALEM_MODEL,
+        "alerts_count": len(alerts_store),
+    }
+
+@app.post("/api/stt/test")
+async def stt_test():
+    """Test STT by sending a small synthetic audio chunk to Alem AI."""
+    if not openai_client and not openai_client_2:
+        return {"ok": False, "error": "Alem AI не настроен (ALEM_API_KEY_1 отсутствует)"}
+    client_stt = openai_client or openai_client_2
+    bases_to_try = [ALEM_API_BASE] + [b for b in ALEM_FALLBACK_BASES if b != ALEM_API_BASE]
+    results = []
+    for base_url in bases_to_try:
+        try:
+            client_check = client_stt
+            if client_check.base_url != base_url:
+                client_check = AsyncOpenAI(api_key=client_check.api_key, base_url=base_url)
+            resp = await asyncio.wait_for(
+                client_check.models.list(), timeout=10
+            )
+            models = [m.id for m in resp.data]
+            results.append({"base_url": base_url, "reachable": True, "models_count": len(models)})
+        except Exception as e:
+            results.append({"base_url": base_url, "reachable": False, "error": str(e)[:100]})
+    return {"ok": any(r["reachable"] for r in results), "results": results}
 
 # ======================= HELPERS =======================
 
@@ -440,41 +490,56 @@ async def ws_subtitles(websocket: WebSocket):
             pass
 
     async def transcribe_and_reply(parsed: dict, audio_data: bytearray, lang: str):
-        if not openai_client:
-            await safe_send("[Backend: Alem AI not configured]")
+        if not openai_client and not openai_client_2:
+            await safe_send("[STT: Alem AI не настроен — проверьте ALEM_API_KEY_1]")
             return
-        try:
-            audio_file = io.BytesIO(audio_data)
-            audio_file.name = f"chunk_{int(time.time())}.webm"
-            transcript = await asyncio.wait_for(
-                openai_client.audio.transcriptions.create(
-                    model="whisper-1", file=audio_file, language=lang
-                ), timeout=15
-            )
-            final_text = transcript.text
-            if final_text and final_text.strip():
-                if parsed.get("translate"):
-                    target_lang = parsed.get("target_lang", "kazakh")
-                    try:
-                        resp = await asyncio.wait_for(
-                            openai_client.chat.completions.create(
-                                model=ALEM_MODEL,
-                                messages=[
-                                    {"role": "system", "content": f"Translate to {target_lang}. Return ONLY translation."},
-                                    {"role": "user", "content": final_text}
-                                ]
-                            ), timeout=10
-                        )
-                        final_text = resp.choices[0].message.content.strip()
-                    except Exception as te:
-                        logger.error(f"WS Translation Error: {te}")
-                await safe_send(final_text)
-        except asyncio.TimeoutError:
-            logger.warning(f"STT timed out ({len(audio_data)} bytes)")
-            await safe_send("[Timeout]")
-        except Exception as e:
-            logger.error(f"Alem STT Error: {e}")
-            await safe_send(f"[STT Error]")
+        client_stt = openai_client or openai_client_2
+        bases_to_try = [ALEM_API_BASE] + [b for b in ALEM_FALLBACK_BASES if b != ALEM_API_BASE]
+
+        # Try multiple base URLs + multiple file extensions
+        for ext in [".webm", ".mp3", ".wav"]:
+            for base_url in bases_to_try:
+                try:
+                    client = client_stt
+                    if client.base_url != base_url:
+                        client = AsyncOpenAI(api_key=client.api_key, base_url=base_url)
+                    audio_file = io.BytesIO(audio_data)
+                    audio_file.name = f"chunk_{int(time.time())}{ext}"
+                    transcript = await asyncio.wait_for(
+                        client.audio.transcriptions.create(
+                            model="whisper-1", file=audio_file, language=lang
+                        ), timeout=15
+                    )
+                    final_text = transcript.text
+                    if final_text and final_text.strip():
+                        if parsed.get("translate"):
+                            target_lang = parsed.get("target_lang", "kazakh")
+                            try:
+                                resp = await asyncio.wait_for(
+                                    client.chat.completions.create(
+                                        model=ALEM_MODEL,
+                                        messages=[
+                                            {"role": "system", "content": f"Translate to {target_lang}. Return ONLY translation."},
+                                            {"role": "user", "content": final_text}
+                                        ]
+                                    ), timeout=10
+                                )
+                                final_text = resp.choices[0].message.content.strip()
+                            except Exception as te:
+                                logger.error(f"WS Translation Error: {te}")
+                        await safe_send(final_text)
+                    return
+                except asyncio.TimeoutError:
+                    logger.warning(f"STT timeout ({ext} @ {base_url})")
+                    continue
+                except Exception as e:
+                    err_str = str(e)
+                    logger.error(f"Alem STT fail ({ext} @ {base_url}): {err_str}")
+                    if "404" in err_str or "not found" in err_str.lower():
+                        continue
+                    await safe_send(f"[STT Error: {err_str[:100]}]")
+                    return
+        await safe_send("[STT Error: все попытки не удались]")
 
     try:
         while True:

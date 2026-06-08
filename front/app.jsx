@@ -241,6 +241,27 @@ function App() {
       .catch(() => {});
   }, [currentUser]);
 
+  // === Diagnostics ===
+  const [diagResult, setDiagResult] = useState(null);
+  const [isDiagLoading, setIsDiagLoading] = useState(false);
+
+  const runDiagnostics = async () => {
+    setIsDiagLoading(true);
+    setDiagResult(null);
+    try {
+      const [rootRes, diagRes, sttRes] = await Promise.all([
+        fetch(`${API}/`).then(r => r.json()).catch(() => ({ status: 'error', message: 'Backend недоступен' })),
+        fetch(`${API}/api/diagnose`).then(r => r.json()).catch(() => ({ status: 'error', message: 'Backend недоступен' })),
+        fetch(`${API}/api/stt/test`).then(r => r.json()).catch(() => ({ ok: false, error: 'Backend недоступен' })),
+      ]);
+      setDiagResult({ root: rootRes, diagnose: diagRes, stt: sttRes });
+    } catch (err) {
+      setDiagResult({ error: err.message });
+    } finally {
+      setIsDiagLoading(false);
+    }
+  };
+
   // === Academy Quiz ===
   const [isQuizMode, setIsQuizMode] = useState(false);
   const [isLearningMode, setIsLearningMode] = useState(false);
@@ -416,13 +437,18 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
-  // Dashboard STT — Alem AI WebSocket
+  // Dashboard STT — Browser SpeechRecognition (primary) + WebSocket (translation)
   // ——————————————————————————————————————————————
   const dashReconnectRef = useRef(0);
   const srLangRef = useRef(srLang);
   useEffect(() => { srLangRef.current = srLang; }, [srLang]);
+  const browserRecognitionRef = useRef(null);
 
   const stopDashSTT = useCallback(() => {
+    if (browserRecognitionRef.current) {
+      try { browserRecognitionRef.current.abort(); } catch { }
+      browserRecognitionRef.current = null;
+    }
     if (dashReconnectTimer.current) { clearTimeout(dashReconnectTimer.current); dashReconnectTimer.current = null; }
     if (dashRecorderRef.current) {
       try { dashRecorderRef.current.stop(); } catch { }
@@ -433,19 +459,77 @@ function App() {
       dashWsRef.current.close();
       dashWsRef.current = null;
     }
+    if (micStreamRef.current) {
+      releaseMic();
+    }
     setInterimText('');
-  }, []);
+  }, [releaseMic]);
 
   const startDashSTT = useCallback(() => {
-    if (dashWsRef.current) return;
     dashReconnectRef.current = 0;
 
+    // 1. Start browser SpeechRecognition (zero-latency, no backend)
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (Recognition) {
+      const recog = new Recognition();
+      recog.continuous = true;
+      recog.interimResults = false;
+      recog.lang = srLangRef.current;
+      browserRecognitionRef.current = recog;
+
+      recog.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            const text = event.results[i][0].transcript.trim();
+            if (!text) continue;
+            const now = Date.now();
+            setSubtitles(prev => {
+              const last = prev[prev.length - 1];
+              if (last && !last.isSystem && (now - last.id < 6000)) {
+                const updated = [...prev];
+                updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
+                return updated;
+              }
+              return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+            });
+            checkDanger(text);
+          }
+        }
+      };
+      recog.onerror = (event) => {
+        console.error('[Browser STT] Error:', event.error);
+        if (event.error === 'not-allowed') {
+          addSystemSubtitle('⛔ Нет доступа к микрофону');
+        } else if (event.error === 'no-speech') {
+          // silent — normal when user stops speaking
+        } else if (event.error === 'aborted') {
+          // expected when stopping
+        } else {
+          addSystemSubtitle(`⚠ Ошибка STT браузера: ${event.error}`);
+        }
+      };
+      recog.onend = () => {
+        if (isListeningRef.current && browserRecognitionRef.current) {
+          try { browserRecognitionRef.current.start(); } catch { }
+        }
+      };
+      try {
+        recog.start();
+        addSystemSubtitle('🟢 Браузерное STT запущено');
+      } catch (err) {
+        console.error('[Browser STT] Start error:', err);
+      }
+    } else {
+      addSystemSubtitle('⚠ Браузер не поддерживает SpeechRecognition');
+    }
+
+    // 2. Connect WS for translation support (if Alem AI is available)
+    if (dashWsRef.current) return;
     const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
     const ws = new WebSocket(wsUrl);
     dashWsRef.current = ws;
 
     ws.onopen = async () => {
-      addSystemSubtitle('🟢 Микрофон подключён, жду речь...');
       dashReconnectRef.current = 0;
       try {
         const stream = await acquireMic();
@@ -472,38 +556,37 @@ function App() {
     ws.onmessage = (event) => {
       if (typeof event.data !== 'string') return;
       if (event.data.startsWith('[')) {
-        addSystemSubtitle('⚠ ' + event.data.replace(/[\[\]]/g, ''));
+        // Don't show backend errors for every chunk — only if it's critical
+        if (event.data.includes('not configured') || event.data.includes('все попытки')) {
+          addSystemSubtitle('⚠ Серверное STT недоступно, использую браузерное');
+        }
         return;
       }
       const rawText = event.data.trim();
       if (!rawText) return;
-      const now = Date.now();
-      setSubtitles(prev => {
-        const last = prev[prev.length - 1];
-        if (last && !last.isSystem && (now - last.id < 6000)) {
-          const updated = [...prev];
-          updated[updated.length - 1] = { ...last, text: last.text + ' ' + rawText, id: now };
-          return updated;
-        }
-        return [...prev, { id: now, text: rawText, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
-      });
-      checkDanger(rawText);
+      // If translation is ON, show translated result; otherwise browser STT already shows text
+      if (isAiTranslatingRef.current) {
+        const now = Date.now();
+        setSubtitles(prev => {
+          const last = prev[prev.length - 1];
+          if (last && !last.isSystem && (now - last.id < 6000)) {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...last, text: last.text + ' ' + rawText, id: now };
+            return updated;
+          }
+          return [...prev, { id: now, text: rawText + ' (перевод)', timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+        });
+      }
     };
 
     ws.onerror = (e) => {
       console.error('[Dash] WS Error', e);
-      addSystemSubtitle('⚠ Ошибка WebSocket');
     };
     ws.onclose = () => {
       releaseMic();
       dashWsRef.current = null;
       dashRecorderRef.current = null;
-      if (isListeningRef.current) {
-        const delay = Math.min(1000 * Math.pow(2, dashReconnectRef.current), 15000);
-        dashReconnectRef.current++;
-        addSystemSubtitle(`♻ Переподключение через ${Math.round(delay / 1000)}с...`);
-        dashReconnectTimer.current = setTimeout(() => startDashSTT(), delay);
-      }
+      // Don't reconnect WS by default — browser STT is already running
     };
   }, [acquireMic, releaseMic]);
 
@@ -1564,9 +1647,62 @@ function App() {
             <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#eff6ff', borderRadius: '18px', fontSize: '0.95rem', color: '#1e40af', border: '1px solid #bfdbfe' }}>
               <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '1.05rem' }}><Info size={18} /> О субтитрах</strong>
               <div style={{ opacity: 0.9, lineHeight: 1.6 }}>
-                Субтитры работают напрямую через движок вашего браузера (<strong>Web Speech API</strong>), обеспечивая нулевую задержку без сторонних серверов.<br /><br />
-                ✅ Полная поддержка: Chrome (ПК/Android), Safari (iOS), Edge, Opera.
+                Субтитры работают через <strong>браузерный SpeechRecognition</strong> (мгновенно, без сервера) и через <strong>серверный STT</strong> (для перевода).<br /><br />
+                ✅ Браузер: Chrome, Safari, Edge, Opera.
               </div>
+            </div>
+
+            {/* Diagnostics */}
+            <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#fff7ed', borderRadius: '18px', border: '1px solid #fed7aa' }}>
+              <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '1.05rem', color: '#9a3412' }}>
+                <Zap size={18} /> Диагностика STT
+              </strong>
+              <button
+                onClick={runDiagnostics}
+                disabled={isDiagLoading}
+                style={{ padding: '0.65rem 1.25rem', borderRadius: '12px', border: 'none', background: '#3b82f6', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {isDiagLoading ? 'Проверка...' : 'Проверить сервер'}
+              </button>
+              {diagResult && (
+                <div style={{ marginTop: '1rem', fontSize: '0.85rem', fontFamily: 'monospace', lineHeight: 1.6 }}>
+                  {diagResult.root?.status === 'error' ? (
+                    <div style={{ color: '#dc2626' }}>❌ Бэкенд не отвечает ({diagResult.root.message})</div>
+                  ) : (
+                    <>
+                      <div style={{ color: '#16a34a' }}>✅ Бэкенд: {diagResult.root?.message || 'OK'}</div>
+                      {diagResult.diagnose && (
+                        <>
+                          <div style={{ color: diagResult.diagnose.db ? '#16a34a' : '#dc2626' }}>📦 БД: {diagResult.diagnose.db ? 'OK' : 'Ошибка'}</div>
+                          <div style={{ color: diagResult.diagnose.xai_configured ? '#16a34a' : '#ca8a04' }}>🤖 xAI: {diagResult.diagnose.xai_configured ? 'Готов' : 'Не настроен'}</div>
+                          <div style={{ color: diagResult.diagnose.alem_configured ? '#16a34a' : '#ca8a04' }}>🎤 Alem AI: {diagResult.diagnose.alem_configured ? 'Готов' : 'Не настроен'}</div>
+                          <div style={{ color: '#475569' }}>🔗 Alem URL: {diagResult.diagnose.alem_base_url}</div>
+                        </>
+                      )}
+                      {diagResult.stt && (
+                        <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '10px' }}>
+                          {diagResult.stt.ok ? (
+                            <div style={{ color: '#16a34a' }}>🎙 STT тест: OK</div>
+                          ) : (
+                            <div style={{ color: '#dc2626' }}>🎙 STT тест: Ошибка — {diagResult.stt.error || diagResult.stt.results?.map(r => `${r.base_url}: ${r.reachable ? 'OK' : r.error}`).join('; ')}</div>
+                          )}
+                          {diagResult.stt.results?.map((r, i) => (
+                            <div key={i} style={{ color: r.reachable ? '#16a34a' : '#dc2626', marginLeft: '1rem', fontSize: '0.8rem' }}>
+                              {r.reachable ? '✅' : '❌'} {r.base_url}: {r.reachable ? `${r.models_count} моделей` : r.error}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {diagResult.error && (
+                    <div style={{ color: '#dc2626' }}>❌ Ошибка: {diagResult.error}</div>
+                  )}
+                  <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.8rem' }}>
+                    🖥 Браузер STT: {SR ? '✅ Доступен' : '❌ Не поддерживается'}
+                  </div>
+                </div>
+              )}
             </div>
 
             <button style={{ marginTop: '2.5rem', width: '100%', padding: '1rem', borderRadius: '14px', background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.65rem', transition: 'all 0.2s' }} onClick={handleLogout}>
