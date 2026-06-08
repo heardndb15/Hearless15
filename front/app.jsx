@@ -218,6 +218,10 @@ function App() {
     }
   }, [currentUser]);
 
+  useEffect(() => {
+    setSrAvailable(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+  }, []);
+
   // === Navigation ===
   const [activeTab, setActiveTab] = useState('dashboard');
 
@@ -229,6 +233,7 @@ function App() {
     { id: 0, text: "Система готова. Нажмите «Слушать» для старта.", timestamp: '—', isFinal: true }
   ]);
   const [interimText, setInterimText] = useState('');  // live typing text
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   // === Alerts ===
   const [alerts, setAlerts] = useState([]);
@@ -452,6 +457,7 @@ function App() {
   const srLangRef = useRef(srLang);
   useEffect(() => { srLangRef.current = srLang; }, [srLang]);
   const dashRecogRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
 
   const stopDashSTT = useCallback(() => {
     if (dashRecogRef.current) {
@@ -465,19 +471,22 @@ function App() {
     stopDashSTT();
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
+      setSrAvailable(false);
       addSystemSubtitle('⚠ Браузер не поддерживает распознавание речи');
       return;
     }
     const recog = new Recognition();
     recog.continuous = true;
-    recog.interimResults = false;
+    recog.interimResults = true;
     recog.lang = srLangRef.current;
     dashRecogRef.current = recog;
 
     recog.onresult = (event) => {
+      let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const text = event.results[i][0].transcript.trim();
+        const result = event.results[i];
+        if (result.isFinal) {
+          const text = result[0].transcript.trim();
           if (!text) continue;
           const now = Date.now();
           setSubtitles(prev => {
@@ -490,8 +499,11 @@ function App() {
             return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
           });
           checkDanger(text);
+        } else {
+          interim += result[0].transcript;
         }
       }
+      setInterimText(interim);
     };
 
     recog.onend = () => {
@@ -500,7 +512,18 @@ function App() {
       }
     };
 
-    recog.onerror = () => {};
+    recog.onerror = (event) => {
+      console.error('[STT] onerror:', event.error);
+      if (event.error === 'not-allowed') {
+        addSystemSubtitle('⛔ Микрофон заблокирован. Разрешите доступ в настройках браузера.');
+        setIsListening(false);
+      } else if (event.error === 'language-not-supported') {
+        addSystemSubtitle('⚠ Язык не поддерживается распознаванием речи в этом браузере.');
+        setIsListening(false);
+      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        addSystemSubtitle(`⚠ Ошибка STT: ${event.error}`);
+      }
+    };
 
     try { recog.start(); } catch (err) {
       console.error('[STT] Error:', err);
@@ -508,6 +531,54 @@ function App() {
     }
     addSystemSubtitle('🟢 Субтитры запущены');
   }, []);
+
+  // ——————————————————————————————————————————————
+  // Whisper STT — AI fallback (replaces ElevenLabs)
+  // ——————————————————————————————————————————————
+  const startWhisperSTT = async () => {
+    if (isTranscribing) return;
+    setIsTranscribing(true);
+    addSystemSubtitle('🎤 Запись для AI транскрибации...');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' });
+      mediaRecorderRef.current = mr;
+
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: mr.mimeType });
+        const fd = new FormData();
+        fd.append('file', blob, `recording.${mr.mimeType.includes('mp4') ? 'mp4' : 'webm'}`);
+
+        try {
+          addSystemSubtitle('⏳ AI обрабатывает речь...');
+          const res = await fetch(`${API}/api/transcribe`, { method: 'POST', body: fd });
+          const data = await res.json();
+          if (data.text) {
+            const now = Date.now();
+            setSubtitles(prev => [...prev, { id: now, text: data.text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30));
+            checkDanger(data.text);
+          } else {
+            addSystemSubtitle('⚠ AI не распознал речь');
+          }
+        } catch (err) {
+          addSystemSubtitle('⛔ Ошибка AI транскрибации. Убедитесь, что OPENAI_API_KEY настроен.');
+          console.error('[Whisper] Error:', err);
+        }
+        setIsTranscribing(false);
+      };
+
+      mr.start(5000);
+      setTimeout(() => { if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop(); }, 7000);
+    } catch (err) {
+      addSystemSubtitle('⛔ Нет доступа к микрофону для AI транскрибации');
+      setIsTranscribing(false);
+    }
+  };
 
   const changeLang = (lang) => {
     setSrLang(lang);
@@ -642,7 +713,9 @@ function App() {
         try { lectureRecogRef.current.start(); } catch { }
       }
     };
-    recog.onerror = () => {};
+    recog.onerror = (event) => {
+      console.error('[Lecture] STT error:', event.error);
+    };
     try { recog.start(); } catch (err) { console.error('[Lecture] STT error:', err); }
   }, [stopLectureRecog]);
 
@@ -943,12 +1016,25 @@ function App() {
                     ))}
                   </select>
                 </div>
+                  {!srAvailable ? (
+                    <span style={{ color: '#ef4444', fontSize: '0.85rem', fontWeight: 600, maxWidth: '200px', textAlign: 'center' }}>
+                      ⚠ Распознавание речи недоступно в этом браузере
+                    </span>
+                  ) : (
                   <button
                     style={{ ...s.listenBtn, padding: '0.85rem 1.75rem', borderRadius: '16px', background: isListening ? '#ef4444' : '#0f172a' }}
                     onClick={() => setIsListening(!isListening)}
                   >
                   {isListening ? <><Square size={16} /> Остановить</> : <><Mic size={16} /> Слушать сейчас</>}
-                </button>
+                  </button>
+                  )}
+                  <button
+                    onClick={startWhisperSTT}
+                    disabled={isTranscribing}
+                    style={{ ...s.listenBtn, padding: '0.85rem 1.5rem', borderRadius: '16px', background: isTranscribing ? '#94a3b8' : '#7c3aed', opacity: isTranscribing ? 0.7 : 1 }}
+                  >
+                    {isTranscribing ? <><Loader2 size={16} style={{ animation: 'spin 2s linear infinite' }} /> AI...</> : <>🎤 AI транскрибация</>}
+                  </button>
               </div>
             </header>
 

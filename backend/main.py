@@ -26,6 +26,7 @@ load_dotenv()
 app = FastAPI(title="Hearless Backend", version="2.0.0")
 
 client: Optional[AsyncOpenAI] = None
+whisper_client: Optional[AsyncOpenAI] = None
 
 alerts_store = []
 last_alert_time = {}
@@ -55,7 +56,7 @@ def hash_pw(pw: str):
 
 @app.on_event("startup")
 async def startup_event():
-    global client
+    global client, whisper_client
     xai_key = os.getenv("XAI_API_KEY", "").strip()
     if xai_key:
         try:
@@ -65,7 +66,18 @@ async def startup_event():
             logger.error(f"xAI init failed: {e}")
     else:
         logger.warning("XAI_API_KEY not set")
-    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'}")
+
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        try:
+            whisper_client = AsyncOpenAI(api_key=openai_key)
+            logger.info("OpenAI Whisper ready")
+        except Exception as e:
+            logger.error(f"OpenAI init failed: {e}")
+    else:
+        logger.warning("OPENAI_API_KEY not set — Whisper STT disabled")
+
+    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'}")
 
 # ======================= DIAGNOSTICS =======================
 
@@ -255,6 +267,33 @@ async def chat_lecture(payload: dict):
 async def translate_subtitle(payload: dict):
     text = payload.get("text", "")
     return {"text": text}
+
+
+# --- Whisper STT (replaces ElevenLabs) ---
+@app.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    if not whisper_client:
+        raise HTTPException(400, "OPENAI_API_KEY not configured — Whisper unavailable")
+
+    try:
+        contents = await file.read()
+        suffix = os.path.splitext(file.filename or ".webm")[1] or ".webm"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(contents)
+        tmp.close()
+
+        with open(tmp.name, "rb") as audio:
+            transcript = await whisper_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio
+            )
+        return {"text": transcript.text}
+    except Exception as e:
+        logger.error(f"Whisper STT error: {e}")
+        raise HTTPException(500, f"Whisper error: {str(e)}")
+    finally:
+        if tmp and os.path.exists(tmp.name):
+            os.unlink(tmp.name)
 
 
 @app.post("/api/summarize")
