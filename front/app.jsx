@@ -445,10 +445,15 @@ function App() {
     dashWsRef.current = ws;
 
     ws.onopen = async () => {
+      addSystemSubtitle('🟢 Микрофон подключён, жду речь...');
       dashReconnectRef.current = 0;
       try {
         const stream = await acquireMic();
-        const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        const mt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+               : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+               : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+               : '';
+        const mr = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined);
         dashRecorderRef.current = mr;
         mr.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
@@ -466,7 +471,10 @@ function App() {
 
     ws.onmessage = (event) => {
       if (typeof event.data !== 'string') return;
-      if (event.data.startsWith('[')) return;
+      if (event.data.startsWith('[')) {
+        addSystemSubtitle('⚠ ' + event.data.replace(/[\[\]]/g, ''));
+        return;
+      }
       const rawText = event.data.trim();
       if (!rawText) return;
       const now = Date.now();
@@ -482,7 +490,10 @@ function App() {
       checkDanger(rawText);
     };
 
-    ws.onerror = (e) => console.error('[Dash] WS Error', e);
+    ws.onerror = (e) => {
+      console.error('[Dash] WS Error', e);
+      addSystemSubtitle('⚠ Ошибка WebSocket');
+    };
     ws.onclose = () => {
       releaseMic();
       dashWsRef.current = null;
@@ -490,6 +501,7 @@ function App() {
       if (isListeningRef.current) {
         const delay = Math.min(1000 * Math.pow(2, dashReconnectRef.current), 15000);
         dashReconnectRef.current++;
+        addSystemSubtitle(`♻ Переподключение через ${Math.round(delay / 1000)}с...`);
         dashReconnectTimer.current = setTimeout(() => startDashSTT(), delay);
       }
     };
@@ -602,7 +614,11 @@ function App() {
     ws.onopen = async () => {
       try {
         const stream = await acquireMic();
-        const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        const mt = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+               : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+               : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+               : '';
+        const mr = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined);
         lectureRecorderRef.current = mr;
         mr.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
