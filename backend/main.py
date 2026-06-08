@@ -6,8 +6,6 @@ import logging
 import shutil
 import tempfile
 import os
-import sqlite3
-import aiosqlite
 import hashlib
 import time
 import asyncio
@@ -17,46 +15,39 @@ from pydantic import BaseModel
 from openai import AsyncOpenAI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("HearlessBackend")
 
 load_dotenv()
 
-app = FastAPI(title="Hearless Backend", version="2.0.0")
+app = FastAPI(title="Hearless Backend", version="3.0.0")
 
 client: Optional[AsyncOpenAI] = None
 whisper_client: Optional[AsyncOpenAI] = None
+supabase: Optional[Client] = None
 
 alerts_store = []
 last_alert_time = {}
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-def init_db():
-    try:
-        with sqlite3.connect("users.db", timeout=10) as conn:
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, avatar TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS lectures (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, notes TEXT, summary TEXT, created_at TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS sos_events (id INTEGER PRIMARY KEY AUTOINCREMENT, latitude REAL, longitude REAL, timestamp TEXT, user_id TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS sign_progress (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, sign_id INTEGER, learned INTEGER DEFAULT 0, times_practiced INTEGER DEFAULT 0, last_practiced TEXT, correct_count INTEGER DEFAULT 0, wrong_count INTEGER DEFAULT 0, UNIQUE(username, sign_id))''')
-            conn.commit()
-    except Exception as e:
-        logger.error(f"DB init failed: {e}")
-
-init_db()
 
 class AuthUser(BaseModel):
     username: str
     password: str
 
+
 def hash_pw(pw: str):
     return hashlib.sha256(pw.encode()).hexdigest()
 
+
 @app.on_event("startup")
 async def startup_event():
-    global client, whisper_client
+    global client, whisper_client, supabase
+
+    # ── xAI Grok ──
     xai_key = os.getenv("XAI_API_KEY", "").strip()
     if xai_key:
         try:
@@ -67,6 +58,7 @@ async def startup_event():
     else:
         logger.warning("XAI_API_KEY not set")
 
+    # ── OpenAI Whisper ──
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     if openai_key:
         try:
@@ -77,17 +69,32 @@ async def startup_event():
     else:
         logger.warning("OPENAI_API_KEY not set — Whisper STT disabled")
 
-    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'}")
+    # ── Supabase ──
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    if supabase_url and supabase_key:
+        try:
+            supabase = create_client(supabase_url, supabase_key)
+            # Quick connectivity check
+            supabase.table("users").select("count", count="exact").limit(1).execute()
+            logger.info("Supabase connected")
+        except Exception as e:
+            logger.error(f"Supabase init failed: {e}")
+            supabase = None
+    else:
+        logger.warning("SUPABASE_URL / SUPABASE_ANON_KEY not set — DB disabled")
+
+    logger.info(f"Hearless v3.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'} | Supabase={'yes' if supabase else 'no'}")
+
 
 # ======================= DIAGNOSTICS =======================
 
 @app.get("/api/diagnose")
 async def api_diagnose():
-    """Service health check."""
     db_ok = False
     try:
-        async with aiosqlite.connect("users.db", timeout=5) as conn:
-            await conn.execute("SELECT 1")
+        if supabase:
+            supabase.table("users").select("count", count="exact").limit(1).execute()
             db_ok = True
     except Exception as e:
         logger.error(f"DB diagnose error: {e}")
@@ -98,15 +105,13 @@ async def api_diagnose():
         "alerts_count": len(alerts_store),
     }
 
+
 # ======================= HELPERS =======================
 
 async def verify_danger_with_ai(text: str) -> bool:
-    """Use AI to filter false positives in danger detection."""
     if not client or not text.strip():
         return False
-    
     try:
-        # Check if text contains high-alert keywords before calling AI
         danger_keywords = ["fire", "сирена", "помогите", "убивают", "грабят", "взрыв", "siren", "help", "explosion"]
         if not any(k in text.lower() for k in danger_keywords):
             return False
@@ -127,18 +132,20 @@ async def verify_danger_with_ai(text: str) -> bool:
         return "yes" in prediction
     except Exception as e:
         logger.error(f"AI Danger Verification Error: {e}")
-        # Fallback to keyword matching if AI fails
-        return True 
+        return True
+
 
 # ======================= ROUTES =======================
 
 @app.get("/")
 def read_root():
     return {
-        "status": "ok", 
+        "status": "ok",
         "message": "Hearless backend is active",
-        "ai_enabled": client is not None
+        "ai_enabled": client is not None,
+        "db": supabase is not None
     }
+
 
 @app.get("/api/ai/status")
 def ai_status():
@@ -146,29 +153,33 @@ def ai_status():
         return {"ai_ready": True, "provider": "xAI Grok"}
     return {"ai_ready": False, "message": "AI is NOT configured (check XAI_API_KEY)"}
 
+
 # --- Auth ---
+
 @app.post("/api/register")
-async def register_user(user: AuthUser):
+def register_user(user: AuthUser):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     hashed_pw = hash_pw(user.password)
     try:
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            await conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (user.username, hashed_pw))
-            await conn.commit()
+        supabase.table("users").insert({"username": user.username, "password": hashed_pw}).execute()
         return {"success": True, "message": "User registered successfully"}
-    except aiosqlite.IntegrityError:
-        raise HTTPException(status_code=400, detail="Username already exists")
     except Exception as e:
+        err = str(e).lower()
+        if "duplicate" in err or "unique" in err or "already exists" in err:
+            raise HTTPException(status_code=400, detail="Username already exists")
         logger.error(f"Registration Error: {e}")
         raise HTTPException(status_code=500, detail="Internal database error")
 
+
 @app.post("/api/login")
-async def login_user(user: AuthUser):
+def login_user(user: AuthUser):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     hashed_pw = hash_pw(user.password)
     try:
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            async with conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (user.username, hashed_pw)) as cursor:
-                db_user = await cursor.fetchone()
-        if db_user:
+        result = supabase.table("users").select("*").eq("username", user.username).eq("password", hashed_pw).execute()
+        if result.data:
             return {"success": True, "username": user.username}
         raise HTTPException(status_code=401, detail="Invalid credentials")
     except HTTPException:
@@ -177,29 +188,44 @@ async def login_user(user: AuthUser):
         logger.error(f"Login Error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @app.get("/api/user/{username}")
-async def get_user_profile(username: str):
-    async with aiosqlite.connect("users.db", timeout=10) as conn:
-        async with conn.execute("SELECT avatar FROM users WHERE username = ?", (username,)) as cursor:
-            row = await cursor.fetchone()
-    if row:
-        return {"username": username, "avatar": row[0]}
-    raise HTTPException(status_code=404, detail="User not found")
+def get_user_profile(username: str):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        result = supabase.table("users").select("username, avatar").eq("username", username).execute()
+        if result.data:
+            return result.data[0]
+        raise HTTPException(status_code=404, detail="User not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"User profile error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @app.post("/api/user/{username}/avatar")
-async def update_user_avatar(username: str, payload: dict):
+def update_user_avatar(username: str, payload: dict):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     avatar_base64 = payload.get("avatar")
     if not avatar_base64:
         raise HTTPException(status_code=400, detail="Avatar data missing")
-    async with aiosqlite.connect("users.db", timeout=10) as conn:
-        await conn.execute("UPDATE users SET avatar = ? WHERE username = ?", (avatar_base64, username))
-        await conn.commit()
-    return {"success": True}
+    try:
+        supabase.table("users").update({"avatar": avatar_base64}).eq("username", username).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Avatar update error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 # --- Alerts & SOS ---
+
 @app.get("/api/alerts")
 def get_alerts():
     return {"alerts": alerts_store[-20:]}
+
 
 @app.post("/api/alerts")
 def post_alert(alert: dict):
@@ -209,38 +235,37 @@ def post_alert(alert: dict):
         alerts_store[:] = alerts_store[-100:]
     return {"success": True}
 
+
 @app.post("/api/sos")
-async def post_sos(payload: dict):
+def post_sos(payload: dict):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         latitude = payload.get("latitude")
         longitude = payload.get("longitude")
         user_id = payload.get("user_id", "anonymous")
-        danger_type = payload.get("danger_type", "manual_sos")
-        
-        logger.warning(f"SOS Triggered by {user_id}: {danger_type} at ({latitude}, {longitude})")
-        
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            await conn.execute(
-                "INSERT INTO sos_events (latitude, longitude, timestamp, user_id) VALUES (?,?,datetime('now'),?)",
-                (latitude, longitude, user_id)
-            )
-            await conn.commit()
+        logger.warning(f"SOS Triggered by {user_id} at ({latitude}, {longitude})")
+        supabase.table("sos_events").insert({
+            "latitude": latitude,
+            "longitude": longitude,
+            "user_id": user_id
+        }).execute()
         return {"success": True, "message": "SOS received and recorded"}
     except Exception as e:
         logger.error(f"SOS Save Error: {e}")
         return {"success": False, "error": str(e)}
 
+
 # --- Lecture AI Tools ---
+
 @app.post("/api/chat-lecture")
 async def chat_lecture(payload: dict):
     text = payload.get("text", "")
     message = payload.get("message", "")
     if not text.strip() or not message.strip():
         return {"response": "Контекст или сообщение пустые."}
-    
     if not client:
         return {"response": "AI service not available."}
-
     try:
         resp = await asyncio.wait_for(
             client.chat.completions.create(
@@ -263,25 +288,25 @@ async def chat_lecture(payload: dict):
         logger.error(f"Chat AI Error: {e}")
         return {"response": "❌ Ошибка ИИ при ответе."}
 
+
 @app.post("/api/translate-subtitle")
-async def translate_subtitle(payload: dict):
+def translate_subtitle(payload: dict):
     text = payload.get("text", "")
     return {"text": text}
 
 
-# --- Whisper STT (replaces ElevenLabs) ---
+# --- Whisper STT ---
+
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     if not whisper_client:
         raise HTTPException(400, "OPENAI_API_KEY not configured — Whisper unavailable")
-
     try:
         contents = await file.read()
         suffix = os.path.splitext(file.filename or ".webm")[1] or ".webm"
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp.write(contents)
         tmp.close()
-
         with open(tmp.name, "rb") as audio:
             transcript = await whisper_client.audio.transcriptions.create(
                 model="whisper-1",
@@ -296,12 +321,13 @@ async def transcribe_audio(file: UploadFile = File(...)):
             os.unlink(tmp.name)
 
 
+# --- Summarize & PDF ---
+
 @app.post("/api/summarize")
 async def summarize_text(payload: dict):
     text = payload.get("text", "")
     if not text.strip(): return {"summary": ""}
     if not client: return {"summary": text[:200] + "..."}
-
     try:
         resp = await asyncio.wait_for(
             client.chat.completions.create(
@@ -320,26 +346,22 @@ async def summarize_text(payload: dict):
         logger.error(f"Summarize Error: {e}")
         return {"summary": "Ошибка генерации саммари."}
 
+
 @app.post("/api/pdf-notes")
 async def pdf_notes(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Invalid file format")
-    
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
-
     try:
         from PyPDF2 import PdfReader
         reader = PdfReader(tmp_path)
         extracted_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        
         if not extracted_text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from PDF")
-        
         if not client:
             return {"notes": "AI unavailable", "summary": "AI unavailable", "text": extracted_text[:1000]}
-
         notes_task = client.chat.completions.create(
             model='grok-beta',
             messages=[{"role": "user", "content": f"Create detailed study notes in Russian for this: {extracted_text[:30000]}"}]
@@ -348,11 +370,9 @@ async def pdf_notes(file: UploadFile = File(...)):
             model='grok-beta',
             messages=[{"role": "user", "content": f"Create a short summary in Russian for this: {extracted_text[:30000]}"}]
         )
-
         notes_resp, sum_resp = await asyncio.wait_for(
             asyncio.gather(notes_task, summary_task), timeout=60
         )
-        
         return {
             "notes": notes_resp.choices[0].message.content,
             "summary": sum_resp.choices[0].message.content,
@@ -367,53 +387,61 @@ async def pdf_notes(file: UploadFile = File(...)):
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
+
+# --- Lectures ---
+
 @app.get("/api/lectures")
-async def list_lectures():
-    async with aiosqlite.connect("users.db", timeout=10) as conn:
-        async with conn.execute("SELECT id, title, summary, created_at FROM lectures ORDER BY id DESC") as cursor:
-            rows = await cursor.fetchall()
-    return {"lectures": [{"id": r[0], "title": r[1], "summary": r[2], "created_at": r[3]} for r in rows]}
+def list_lectures():
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        result = supabase.table("lectures").select("id, title, summary, created_at").order("id", desc=True).execute()
+        return {"lectures": result.data}
+    except Exception as e:
+        logger.error(f"List lectures error: {e}")
+        return {"lectures": []}
+
 
 @app.post("/api/lectures")
-async def save_lecture(payload: dict):
+def save_lecture(payload: dict):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     title = payload.get("title") or "New Lecture"
     notes = payload.get("notes", "")
     summary = payload.get("summary", "")
-    async with aiosqlite.connect("users.db", timeout=10) as conn:
-        await conn.execute("INSERT INTO lectures (title, notes, summary, created_at) VALUES (?,?,?,datetime('now'))", (title, notes, summary))
-        await conn.commit()
-    return {"success": True}
+    try:
+        supabase.table("lectures").insert({
+            "title": title,
+            "notes": notes,
+            "summary": summary
+        }).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Save lecture error: {e}")
+        return {"success": False}
+
 
 # --- Danger Detection ---
+
 @app.post("/api/detect-danger")
 async def detect_danger(payload: dict):
     text = payload.get("text", "").lower()
     if not text.strip() or len(text) < 3:
         return {"is_dangerous": False}
-
-    # 1. Simple Keyword Match First
     danger_keywords = [
         "siren", "сирена", "alarm", "тревога", "fire", "пожар",
         "emergency", "help", "помощь", "выстрел", "взрыв", "авария"
     ]
-    
     has_keyword = any(k in text for k in danger_keywords)
-    
     if not has_keyword:
         return {"is_dangerous": False}
-
-    # 2. Debounce Check (don't alert for the same thing more than once every 10 seconds)
     now = time.time()
     for kw in danger_keywords:
         if kw in text:
             if now - last_alert_time.get(kw, 0) < 10:
-                logger.info(f"Debounced alert for {kw}")
                 return {"is_dangerous": False}
             last_alert_time[kw] = now
-
-    # 3. AI Verification for critical keywords to reduce false positives
     is_confirmed = await verify_danger_with_ai(text)
-    
     if is_confirmed:
         logger.warning(f"Confirmed danger detected: {text}")
         alert = {
@@ -425,13 +453,13 @@ async def detect_danger(payload: dict):
         }
         alerts_store.append(alert)
         return {"is_dangerous": True, "alert": alert}
-    
     return {"is_dangerous": False}
 
+
 # --- Sign Language Progress ---
+
 @app.get("/api/signs")
-async def list_signs():
-    """Return the full sign language dictionary with categories."""
+def list_signs():
     return {"signs": [
         {"id": 1, "category": "alphabet", "label": "А", "icon": "🅰️", "sub": "Дактиль", "desc": "Кулак, большой палец сбоку."},
         {"id": 2, "category": "alphabet", "label": "Б", "icon": "🅱️", "sub": "Дактиль", "desc": "Ладонь раскрыта, большой палец прижат."},
@@ -513,65 +541,54 @@ async def list_signs():
         {"id": 78, "category": "colors", "label": "Черный", "icon": "⚫", "sub": "Цвет", "desc": "Указательный палец проводит по брови."},
     ]}
 
+
 @app.post("/api/signs/progress")
-async def update_sign_progress(payload: dict):
-    """Update a user's progress on a specific sign."""
+def update_sign_progress(payload: dict):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     username = payload.get("username")
     sign_id = payload.get("sign_id")
     correct = payload.get("correct", True)
     if not username or not sign_id:
         raise HTTPException(status_code=400, detail="username and sign_id required")
     try:
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            await conn.execute(
-                """INSERT INTO sign_progress (username, sign_id, learned, times_practiced, last_practiced, correct_count, wrong_count)
-                   VALUES (?, ?, 1, 1, datetime('now'), ?, ?)
-                   ON CONFLICT(username, sign_id) DO UPDATE SET
-                       learned = 1,
-                       times_practiced = times_practiced + 1,
-                       last_practiced = datetime('now'),
-                       correct_count = correct_count + ?,
-                       wrong_count = wrong_count + ?""",
-                (username, sign_id, 1 if correct else 0, 0 if correct else 1, 1 if correct else 0, 0 if correct else 1)
-            )
-            await conn.commit()
+        supabase.table("sign_progress").upsert({
+            "username": username,
+            "sign_id": sign_id,
+            "learned": 1,
+            "times_practiced": 1,
+            "correct_count": 1 if correct else 0,
+            "wrong_count": 0 if correct else 1
+        }, on_conflict="username,sign_id").execute()
         return {"success": True}
     except Exception as e:
         logger.error(f"Sign progress error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/signs/progress/{username}")
-async def get_sign_progress(username: str):
-    """Get all progress records for a user."""
+def get_sign_progress(username: str):
+    if not supabase:
+        return {"progress": []}
     try:
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            async with conn.execute(
-                "SELECT sign_id, learned, times_practiced, last_practiced, correct_count, wrong_count FROM sign_progress WHERE username = ?",
-                (username,)
-            ) as cursor:
-                rows = await cursor.fetchall()
-        return {"progress": [
-            {"sign_id": r[0], "learned": r[1], "times_practiced": r[2], "last_practiced": r[3], "correct_count": r[4], "wrong_count": r[5]}
-            for r in rows
-        ]}
+        result = supabase.table("sign_progress").select("*").eq("username", username).execute()
+        return {"progress": result.data}
     except Exception as e:
         logger.error(f"Get sign progress error: {e}")
         return {"progress": []}
 
+
 @app.get("/api/signs/stats/{username}")
-async def get_sign_stats(username: str):
-    """Get aggregate learning statistics for a user."""
+def get_sign_stats(username: str):
+    if not supabase:
+        return {"learned": 0, "practiced": 0, "correct": 0, "wrong": 0, "accuracy": None, "total": 78}
     try:
-        async with aiosqlite.connect("users.db", timeout=10) as conn:
-            async with conn.execute(
-                "SELECT COUNT(*), COALESCE(SUM(times_practiced),0), COALESCE(SUM(correct_count),0), COALESCE(SUM(wrong_count),0) FROM sign_progress WHERE username = ?",
-                (username,)
-            ) as cursor:
-                row = await cursor.fetchone()
-        learned = row[0] if row else 0
-        practiced = row[1] if row else 0
-        correct = row[2] if row else 0
-        wrong = row[3] if row else 0
+        result = supabase.table("sign_progress").select("*").eq("username", username).execute()
+        rows = result.data
+        learned = len(rows)
+        practiced = sum(r.get("times_practiced", 0) for r in rows)
+        correct = sum(r.get("correct_count", 0) for r in rows)
+        wrong = sum(r.get("wrong_count", 0) for r in rows)
         total_attempts = correct + wrong
         accuracy = round((correct / total_attempts) * 100, 1) if total_attempts > 0 else None
         return {
@@ -585,6 +602,7 @@ async def get_sign_stats(username: str):
     except Exception as e:
         logger.error(f"Get sign stats error: {e}")
         return {"learned": 0, "practiced": 0, "correct": 0, "wrong": 0, "accuracy": None, "total": 78}
+
 
 if __name__ == "__main__":
     import uvicorn

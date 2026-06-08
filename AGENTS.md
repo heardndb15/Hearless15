@@ -11,7 +11,7 @@
 
 - Run: `uvicorn main:app --reload` from `backend/`
 - Dependencies: `pip install -r backend/requirements.txt`
-- SQLite `users.db` auto-created on startup in `backend/`; tables: `users`, `lectures`, `sos_events`, `sign_progress`
+- **Database: Supabase** (PostgreSQL). Tables: `users`, `lectures`, `sos_events`, `sign_progress`
 - Passwords: SHA-256 hashing (no bcrypt)
 - CORS: wide open (`*`)
 
@@ -20,6 +20,8 @@
 | Var | Provider | Used for |
 |-----|----------|----------|
 | `XAI_API_KEY` | xAI Grok (`grok-beta`) | danger detection, summarization, chat |
+| `OPENAI_API_KEY` | OpenAI Whisper | STT fallback (transcribe) |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Supabase | PostgreSQL database |
 
 ### Subtitles (STT)
 
