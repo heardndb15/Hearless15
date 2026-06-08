@@ -368,7 +368,7 @@ function App() {
     fetch(`${API}/api/alerts`).then(r => r.json()).then(d => setAlerts(d.alerts || [])).catch(() => { });
   }, [currentUser]);
 
-  useEffect(() => () => { stopDashSTT(); stopLectureWS(); }, []);
+  useEffect(() => () => { stopDashSTT(); stopLectureRecog(); }, []);
 
   // ——————————————————————————————————————————————
   // Auth
@@ -407,74 +407,135 @@ function App() {
   };
 
   // ——————————————————————————————————————————————
-  // Dashboard STT — Browser SpeechRecognition (zero-latency, no backend)
+  // Dashboard STT — WebSocket + ElevenLabs Scribe
   // ——————————————————————————————————————————————
   const srLangRef = useRef(srLang);
   useEffect(() => { srLangRef.current = srLang; }, [srLang]);
-  const browserRecognitionRef = useRef(null);
+  const dashWsRef = useRef(null);
+  const dashRecorderRef = useRef(null);
+  const dashStreamRef = useRef(null);
+  const dashReconnectTimer = useRef(null);
+  const dashReconnectAttempt = useRef(0);
+  const dashChunkTimer = useRef(null);
+
+  const LANG_MAP = { 'ru-RU': 'ru', 'kk-KZ': 'kk', 'en-US': 'en' };
+
+  const recordDashChunk = useCallback(() => {
+    if (!dashStreamRef.current || !dashWsRef.current || !isListeningRef.current) return;
+    const ws = dashWsRef.current;
+    try {
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      const rec = new MediaRecorder(dashStreamRef.current, { mimeType: mime });
+      dashRecorderRef.current = rec;
+
+      const stopTimer = setTimeout(() => {
+        if (rec.state === 'recording') rec.stop();
+      }, 3000);
+
+      rec.ondataavailable = (e) => {
+        clearTimeout(stopTimer);
+        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+          ws.send(e.data);
+          ws.send(JSON.stringify({
+            text: 'END_CHUNK',
+            lang: LANG_MAP[srLangRef.current] || 'ru'
+          }));
+        }
+        if (isListeningRef.current && dashWsRef.current === ws) {
+          dashChunkTimer.current = setTimeout(recordDashChunk, 150);
+        }
+      };
+
+      rec.start();
+    } catch (err) {
+      console.error('[STT] Recorder error:', err);
+      if (isListeningRef.current) {
+        dashChunkTimer.current = setTimeout(recordDashChunk, 1000);
+      }
+    }
+  }, []);
 
   const stopDashSTT = useCallback(() => {
-    if (browserRecognitionRef.current) {
-      try { browserRecognitionRef.current.abort(); } catch { }
-      browserRecognitionRef.current = null;
+    if (dashChunkTimer.current) { clearTimeout(dashChunkTimer.current); dashChunkTimer.current = null; }
+    if (dashReconnectTimer.current) { clearTimeout(dashReconnectTimer.current); dashReconnectTimer.current = null; }
+    dashReconnectAttempt.current = 0;
+    if (dashRecorderRef.current && dashRecorderRef.current.state !== 'inactive') {
+      try { dashRecorderRef.current.stop(); } catch {}
+      dashRecorderRef.current = null;
+    }
+    if (dashStreamRef.current) {
+      dashStreamRef.current.getTracks().forEach(t => t.stop());
+      dashStreamRef.current = null;
+    }
+    if (dashWsRef.current) {
+      try { dashWsRef.current.close(); } catch {}
+      dashWsRef.current = null;
     }
     setInterimText('');
   }, []);
 
   const startDashSTT = useCallback(() => {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) {
-      addSystemSubtitle('⚠ Браузер не поддерживает SpeechRecognition');
-      return;
-    }
+    const wsUrl = API.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/subtitles';
+    console.log('[STT] Connecting WS:', wsUrl);
+    const ws = new WebSocket(wsUrl);
+    dashWsRef.current = ws;
 
-    const recog = new Recognition();
-    recog.continuous = true;
-    recog.interimResults = false;
-    recog.lang = srLangRef.current;
-    browserRecognitionRef.current = recog;
+    ws.onopen = () => {
+      console.log('[STT] WS connected');
+      dashReconnectAttempt.current = 0;
+      navigator.mediaDevices.getUserMedia({ audio: true, echoCancellation: true, noiseSuppression: true })
+        .then(stream => {
+          dashStreamRef.current = stream;
+          recordDashChunk();
+          addSystemSubtitle('🟢 Субтитры запущены (ElevenLabs)');
+        })
+        .catch(err => {
+          console.error('[STT] Mic error:', err);
+          addSystemSubtitle('⛔ Нет доступа к микрофону');
+        });
+    };
 
-    recog.onresult = (event) => {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const text = event.results[i][0].transcript.trim();
-          if (!text) continue;
-          const now = Date.now();
-          setSubtitles(prev => {
-            const last = prev[prev.length - 1];
-            if (last && !last.isSystem && (now - last.id < 6000)) {
-              const updated = [...prev];
-              updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
-              return updated;
-            }
-            return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
-          });
-          checkDanger(text);
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const text = (data.text || '').trim();
+        if (!text) return;
+        if (text.startsWith('[STT')) {
+          addSystemSubtitle(`⚠ ${text}`);
+          return;
         }
+        const now = Date.now();
+        setSubtitles(prev => {
+          const last = prev[prev.length - 1];
+          if (last && !last.isSystem && (now - last.id < 6000)) {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
+            return updated;
+          }
+          return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+        });
+        checkDanger(text);
+      } catch {}
+    };
+
+    ws.onerror = (err) => {
+      console.error('[STT] WS Error:', err);
+    };
+
+    ws.onclose = (event) => {
+      console.log('[STT] WS closed:', event.code, event.reason);
+      if (isListeningRef.current) {
+        const attempt = dashReconnectAttempt.current;
+        const delays = [1000, 2000, 5000, 10000, 30000];
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        dashReconnectAttempt.current = attempt + 1;
+        addSystemSubtitle(`♻ Переподключение через ${delay/1000}с...`);
+        dashReconnectTimer.current = setTimeout(() => {
+          if (isListeningRef.current) startDashSTT();
+        }, delay);
       }
     };
-    recog.onerror = (event) => {
-      console.error('[Browser STT] Error:', event.error);
-      if (event.error === 'not-allowed') {
-        addSystemSubtitle('⛔ Нет доступа к микрофону');
-      } else if (event.error === 'no-speech') {
-      } else if (event.error === 'aborted') {
-      } else {
-        addSystemSubtitle(`⚠ Ошибка STT браузера: ${event.error}`);
-      }
-    };
-    recog.onend = () => {
-      if (isListeningRef.current && browserRecognitionRef.current) {
-        try { browserRecognitionRef.current.start(); } catch { }
-      }
-    };
-    try {
-      recog.start();
-      addSystemSubtitle('🟢 Субтитры запущены');
-    } catch (err) {
-      console.error('[Browser STT] Start error:', err);
-    }
-  }, []);
+  }, [recordDashChunk]);
 
   const changeLang = (lang) => {
     setSrLang(lang);
@@ -892,11 +953,8 @@ function App() {
               <div>
                 <h1 style={{ ...s.h1, fontSize: '1.75rem', marginBottom: '0.25rem' }}>Живые субтитры</h1>
                 <p style={{ ...s.sub, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {srAvailable ? (
-                    <><span style={{ width: '8px', height: '8px', background: '#10b981', borderRadius: '50%' }}></span> Система готова к работе</>
-                  ) : (
-                    <><AlertTriangle size={14} color="#ef4444" /> Браузер не поддерживает Web Speech</>
-                  )}
+                  <span style={{ width: '8px', height: '8px', background: '#10b981', borderRadius: '50%' }}></span>
+                  ElevenLabs STT — русский / қазақша / English
                 </p>
               </div>
 
@@ -913,11 +971,10 @@ function App() {
                     ))}
                   </select>
                 </div>
-                <button
-                  style={{ ...s.listenBtn, padding: '0.85rem 1.75rem', borderRadius: '16px', background: isListening ? '#ef4444' : '#0f172a' }}
-                  onClick={() => setIsListening(!isListening)}
-                  disabled={!srAvailable}
-                >
+                  <button
+                    style={{ ...s.listenBtn, padding: '0.85rem 1.75rem', borderRadius: '16px', background: isListening ? '#ef4444' : '#0f172a' }}
+                    onClick={() => setIsListening(!isListening)}
+                  >
                   {isListening ? <><Square size={16} /> Остановить</> : <><Mic size={16} /> Слушать сейчас</>}
                 </button>
               </div>
@@ -1506,8 +1563,8 @@ function App() {
             <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#eff6ff', borderRadius: '18px', fontSize: '0.95rem', color: '#1e40af', border: '1px solid #bfdbfe' }}>
               <strong style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '1.05rem' }}><Info size={18} /> О субтитрах</strong>
               <div style={{ opacity: 0.9, lineHeight: 1.6 }}>
-                Субтитры работают через <strong>браузерный SpeechRecognition</strong> — мгновенно, без сервера, без задержек.<br /><br />
-                ✅ Браузер: Chrome, Safari, Edge, Opera.
+                Субтитры работают через <strong>ElevenLabs Scribe</strong> (распознавание речи) — WebSocket + ИИ для русского и казахского языков.<br /><br />
+                ✅ Микрофон: Chrome, Safari, Edge, Firefox, Opera.
               </div>
             </div>
 
@@ -1534,6 +1591,7 @@ function App() {
                         <>
                           <div style={{ color: diagResult.diagnose.db ? '#16a34a' : '#dc2626' }}>📦 БД: {diagResult.diagnose.db ? 'OK' : 'Ошибка'}</div>
                           <div style={{ color: diagResult.diagnose.xai_configured ? '#16a34a' : '#ca8a04' }}>🤖 xAI: {diagResult.diagnose.xai_configured ? 'Готов' : 'Не настроен'}</div>
+                          <div style={{ color: diagResult.diagnose.elevenlabs_configured ? '#16a34a' : '#ca8a04' }}>🎤 ElevenLabs: {diagResult.diagnose.elevenlabs_configured ? 'Готов' : 'Не настроен'}</div>
                         </>
                       )}
                     </>
@@ -1541,9 +1599,9 @@ function App() {
                   {diagResult.error && (
                     <div style={{ color: '#dc2626' }}>❌ Ошибка: {diagResult.error}</div>
                   )}
-                  <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.8rem' }}>
-                    🖥 Браузер STT: {SR ? '✅ Доступен' : '❌ Не поддерживается'}
-                  </div>
+                    <div style={{ marginTop: '0.5rem', color: '#64748b', fontSize: '0.8rem' }}>
+                      🖥 WS (ElevenLabs): {typeof WebSocket !== 'undefined' ? '✅ Доступен' : '❌ Нет WebSocket'}
+                    </div>
                 </div>
               )}
             </div>

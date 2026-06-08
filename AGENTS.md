@@ -20,10 +20,7 @@
 | Var | Provider | Used for |
 |-----|----------|----------|
 | `XAI_API_KEY` | xAI Grok (`grok-beta`) | danger detection, summarization, chat |
-| `ALEM_API_KEY_1` | Alem AI (OpenAI-compat) | STT (Whisper), translation |
-| `ALEM_API_KEY_2` | Alem AI (OpenAI-compat) | translation refinement (second pass) |
-
-Copy `.env.example` → `.env` and set them (README's `OPENAI_API_KEY` is outdated).
+| `ELEVENLABS_API_KEY` | ElevenLabs Scribe | speech-to-text (русский / қазақша / English) |
 
 ### Sign language endpoints
 
@@ -34,8 +31,11 @@ Copy `.env.example` → `.env` and set them (README's `OPENAI_API_KEY` is outdat
 
 ### WebSocket
 
-- `/ws/subtitles` — receives binary audio chunks + JSON control messages (`{text: "END_CHUNK", lang: "ru-RU", translate: bool}`)
-- Sends back transcribed (and optionally translated) text
+- `/ws/subtitles` — receives binary audio chunks (Blob from MediaRecorder) + JSON control messages (`{text: "END_CHUNK", lang: "ru-RU"}`)
+- Accumulates chunks in a buffer, sends to ElevenLabs Scribe on `END_CHUNK`
+- Sends back transcribed text
+- Language codes: `ru-RU` → `ru`, `kk-KZ` → `kk`, `en-US` → `en`
+- Frontend creates **self-contained 3s WebM chunks** (stops & restarts MediaRecorder per chunk) so ElevenLabs always receives a valid audio file with headers
 
 ### Test
 

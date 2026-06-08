@@ -1,7 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 import logging
 import shutil
 import tempfile
@@ -11,6 +11,8 @@ import aiosqlite
 import hashlib
 import time
 import asyncio
+import json
+import httpx
 from typing import Optional
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -25,6 +27,7 @@ load_dotenv()
 app = FastAPI(title="Hearless Backend", version="2.0.0")
 
 client: Optional[AsyncOpenAI] = None
+elevenlabs_key: str = ""
 
 alerts_store = []
 last_alert_time = {}
@@ -54,7 +57,7 @@ def hash_pw(pw: str):
 
 @app.on_event("startup")
 async def startup_event():
-    global client
+    global client, elevenlabs_key
     xai_key = os.getenv("XAI_API_KEY", "").strip()
     if xai_key:
         try:
@@ -64,7 +67,12 @@ async def startup_event():
             logger.error(f"xAI init failed: {e}")
     else:
         logger.warning("XAI_API_KEY not set")
-    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'}")
+    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if elevenlabs_key:
+        logger.info(f"ElevenLabs key loaded ({elevenlabs_key[:8]}...)")
+    else:
+        logger.warning("ELEVENLABS_API_KEY not set")
+    logger.info(f"Hearless v2.0 | xAI={'yes' if client else 'no'} | ElevenLabs={'yes' if elevenlabs_key else 'no'}")
 
 # ======================= DIAGNOSTICS =======================
 
@@ -82,6 +90,7 @@ async def api_diagnose():
         "status": "ok",
         "db": db_ok,
         "xai_configured": client is not None,
+        "elevenlabs_configured": bool(elevenlabs_key),
         "alerts_count": len(alerts_store),
     }
 
@@ -116,6 +125,72 @@ async def verify_danger_with_ai(text: str) -> bool:
         logger.error(f"AI Danger Verification Error: {e}")
         # Fallback to keyword matching if AI fails
         return True 
+
+# ======================= ELEVENLABS STT =======================
+
+LANG_MAP = {
+    "ru-RU": "ru", "kk-KZ": "kk", "en-US": "en",
+    "ru": "ru", "kk": "kk", "en": "en",
+}
+
+async def elevenlabs_stt(audio_data: bytes, lang: str = "ru") -> str:
+    """Transcribe audio via ElevenLabs Scribe."""
+    if not elevenlabs_key:
+        logger.error("ElevenLabs key not configured")
+        return "[STT недоступен: ключ ElevenLabs не настроен]"
+    api_lang = LANG_MAP.get(lang, "ru")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as hx:
+            files = {"file": ("audio.webm", audio_data, "audio/webm")}
+            data = {"model_id": "scribe_v1", "language": api_lang}
+            resp = await hx.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": elevenlabs_key},
+                data=data,
+                files=files,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                return result.get("text", "").strip()
+            else:
+                logger.error(f"ElevenLabs STT error {resp.status_code}: {resp.text[:200]}")
+                return f"[STT Error {resp.status_code}]"
+    except Exception as e:
+        logger.error(f"ElevenLabs STT exception: {e}")
+        return f"[STT Error: {e}]"
+
+# ======================= WEB / SUPPORT =======================
+
+@app.websocket("/ws/subtitles")
+async def ws_subtitles(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("WS client connected")
+    audio_buffer = bytearray()
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if "bytes" in message:
+                audio_buffer.extend(message["bytes"])
+            elif "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                    if data.get("text") == "END_CHUNK":
+                        lang = data.get("lang", "ru-RU")
+                        text = ""
+                        if audio_buffer:
+                            text = await elevenlabs_stt(bytes(audio_buffer), lang)
+                            audio_buffer.clear()
+                        await websocket.send_json({"text": text})
+                except json.JSONDecodeError:
+                    pass
+    except WebSocketDisconnect:
+        logger.info("WS client disconnected")
+    except Exception as e:
+        logger.error(f"WS error: {e}")
+    finally:
+        audio_buffer.clear()
 
 # ======================= ROUTES =======================
 
