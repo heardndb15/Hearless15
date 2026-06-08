@@ -13,7 +13,8 @@ import time
 import asyncio
 import json
 import struct
-import httpx
+import aiohttp
+import math
 from typing import Optional
 from pydantic import BaseModel
 from openai import AsyncOpenAI
@@ -142,38 +143,39 @@ async def elevenlabs_stt(audio_data: bytes, lang: str = "ru") -> str:
     api_lang = LANG_MAP.get(lang, "ru")
     logger.info(f"ElevenLabs STT: {len(audio_data)} bytes, lang={api_lang}")
     if len(audio_data) < 100:
-        logger.warning(f"Audio data too small: {len(audio_data)} bytes")
+        logger.warning(f"Audio too small: {len(audio_data)} bytes")
         return ""
-    try:
-        ext_mime_list = [
-            ("audio.wav", "audio/wav"),
-            ("audio.mp3", "audio/mpeg"),
-            ("audio.webm", "audio/webm"),
-        ]
-        for ext, mime in ext_mime_list:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as hx:
-                    files = {"file": (ext, audio_data, mime)}
-                    resp = await hx.post(
-                        "https://api.elevenlabs.io/v1/speech-to-text",
-                        headers={"xi-api-key": elevenlabs_key},
-                        data={"language": api_lang},
-                        files=files,
-                    )
-                    if resp.status_code == 200:
-                        result = resp.json()
+
+    attempts = [
+        ("audio.wav", "audio/wav"),
+        ("audio.mp3", "audio/mpeg"),
+        ("audio.webm", "audio/webm"),
+    ]
+    for filename, content_type in attempts:
+        try:
+            async with aiohttp.ClientSession() as session:
+                form = aiohttp.FormData()
+                form.add_field("file", audio_data, filename=filename, content_type=content_type)
+                form.add_field("language", api_lang)
+                async with session.post(
+                    "https://api.elevenlabs.io/v1/speech-to-text",
+                    headers={"xi-api-key": elevenlabs_key},
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    body = await resp.text()
+                    if resp.status == 200:
+                        result = json.loads(body)
                         text = result.get("text", "").strip()
-                        logger.info(f"ElevenLabs OK ({ext}): '{text[:80]}'")
+                        logger.info(f"ElevenLabs OK ({filename}): '{text[:80]}'")
                         return text
                     else:
-                        body = resp.text[:400]
-                        logger.warning(f"ElevenLabs {ext} -> {resp.status_code}: {body}")
-            except Exception as e:
-                logger.error(f"ElevenLabs {ext} exception: {e}")
-        return "[STT Error: все форматы отклонены]"
-    except Exception as e:
-        logger.error(f"ElevenLabs STT exception: {e}")
-        return f"[STT Error: {e}]"
+                        logger.warning(f"ElevenLabs {filename} -> {resp.status}: {body[:400]}")
+        except asyncio.TimeoutError:
+            logger.error(f"ElevenLabs {filename} timeout")
+        except Exception as e:
+            logger.error(f"ElevenLabs {filename} exception: {e}")
+    return "[STT Error: все форматы отклонены]"
 
 # ======================= WEB / SUPPORT =======================
 
@@ -215,10 +217,8 @@ async def stt_test():
     """Test ElevenLabs STT with a synthetically generated audio file."""
     if not elevenlabs_key:
         return {"error": "ELEVENLABS_API_KEY not set"}
-    results = []
     sample_rate = 44100
     num_samples = int(sample_rate * 0.5)
-    # Generate a 440 Hz sine wave (0.5s, mono, 16-bit PCM)
     wav_bytes = bytearray()
     wav_bytes.extend(b"RIFF")
     data_size = num_samples * 2
@@ -234,28 +234,30 @@ async def stt_test():
     wav_bytes.extend(struct.pack('<H', 16))
     wav_bytes.extend(b"data")
     wav_bytes.extend(struct.pack('<I', data_size))
-    import math
     for i in range(num_samples):
         val = int(math.sin(2 * math.pi * 440 * i / sample_rate) * 16000)
         wav_bytes.extend(struct.pack('<h', val))
 
-    for ext, mime in [("test.wav", "audio/wav"), ("test.mp3", "audio/mpeg"), ("test.webm", "audio/webm")]:
+    results = []
+    for filename, content_type in [("test.wav", "audio/wav"), ("test.mp3", "audio/mpeg"), ("test.webm", "audio/webm")]:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as hx:
-                resp = await hx.post(
+            async with aiohttp.ClientSession() as session:
+                form = aiohttp.FormData()
+                form.add_field("file", bytes(wav_bytes), filename=filename, content_type=content_type)
+                form.add_field("language", "en")
+                async with session.post(
                     "https://api.elevenlabs.io/v1/speech-to-text",
                     headers={"xi-api-key": elevenlabs_key},
-                    data={"language": "en"},
-                    files={"file": (ext, bytes(wav_bytes), mime)},
-                )
-                results.append({
-                    "format": ext,
-                    "status": resp.status_code,
-                    "response": resp.text[:500],
-                })
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    body = await resp.text()
+                    results.append({"format": filename, "status": resp.status, "response": body[:500]})
+        except asyncio.TimeoutError:
+            results.append({"format": filename, "status": "timeout"})
         except Exception as e:
-            results.append({"format": ext, "error": str(e)})
-    return {"elevenlabs_key": elevenlabs_key[:8] + "...", "tests": results}
+            results.append({"format": filename, "error": str(e)})
+    return {"elevenlabs_key_prefix": elevenlabs_key[:8] + "...", "tests": results}
 
 # ======================= ROUTES =======================
 
