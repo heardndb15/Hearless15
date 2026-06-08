@@ -52,38 +52,38 @@ function shuffle(arr) {
 // ——————————————————————————————————————————————
 const SIGN_DATA = [
   // --- Alphabet (A–Я) ---
-  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль', desc: 'Кулак, большой палец сбоку.', video: '' },
-  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль', desc: 'Ладонь раскрыта, большой палец прижат.', video: '' },
-  { id: 3, category: 'alphabet', label: 'В', icon: '✌️', sub: 'Дактиль', desc: 'Указательный и средний пальцы вверх, остальные в кулак.', video: '' },
-  { id: 4, category: 'alphabet', label: 'Г', icon: '🇬', sub: 'Дактиль', desc: 'Указательный палец вверх, остальные в кулак.', video: '' },
-  { id: 5, category: 'alphabet', label: 'Д', icon: '🇩', sub: 'Дактиль', desc: 'Три пальца вверх: указательный, средний и безымянный.', video: '' },
-  { id: 6, category: 'alphabet', label: 'Е', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой палец касается указательного.', video: '' },
-  { id: 7, category: 'alphabet', label: 'Ё', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой у указательного, с движением в сторону.', video: '' },
-  { id: 8, category: 'alphabet', label: 'Ж', icon: '🆖', sub: 'Дактиль', desc: 'Средний и безымянный скрещены, остальные в кулак.', video: '' },
-  { id: 9, category: 'alphabet', label: 'З', icon: '🇿', sub: 'Дактиль', desc: 'Указательный палец рисует зигзаг.', video: '' },
-  { id: 10, category: 'alphabet', label: 'И', icon: '🇮', sub: 'Дактиль', desc: 'Мизинец вверх, остальные в кулак.', video: '' },
-  { id: 11, category: 'alphabet', label: 'К', icon: '🇰', sub: 'Дактиль', desc: 'Указательный и большой вверх, остальные в кулак.', video: '' },
-  { id: 12, category: 'alphabet', label: 'Л', icon: '🇱', sub: 'Дактиль', desc: 'Ладонь раскрыта (буква L в дактиле).', video: '' },
-  { id: 13, category: 'alphabet', label: 'М', icon: '🇲', sub: 'Дактиль', desc: 'Большой палец прижат к мизинцу, остальные накрывают.', video: '' },
-  { id: 14, category: 'alphabet', label: 'Н', icon: '🇳', sub: 'Дактиль', desc: 'Указательный и средний вниз, остальные в кулак.', video: '' },
-  { id: 15, category: 'alphabet', label: 'О', icon: '🅾️', sub: 'Дактиль', desc: 'Все пальцы в кольцо с большим (жест "ок").', video: '' },
-  { id: 16, category: 'alphabet', label: 'П', icon: '🇵', sub: 'Дактиль', desc: 'Ладонь раскрыта, пальцы вместе, направлена вперёд.', video: '' },
-  { id: 17, category: 'alphabet', label: 'Р', icon: '🇷', sub: 'Дактиль', desc: 'Указательный и средний скрещены, остальные в кулак.', video: '' },
-  { id: 18, category: 'alphabet', label: 'С', icon: '🇨', sub: 'Дактиль', desc: 'Большой палец прикрывает сжатые пальцы сверху.', video: '' },
-  { id: 19, category: 'alphabet', label: 'Т', icon: '🇹', sub: 'Дактиль', desc: 'Кулак, большой палец зажат внутри.', video: '' },
-  { id: 20, category: 'alphabet', label: 'У', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, остальные в кулак ("коза").', video: '' },
-  { id: 21, category: 'alphabet', label: 'Ф', icon: '🇫', sub: 'Дактиль', desc: 'Большой палец упирается в указательный (кольцо), остальные раскрыты.', video: '' },
-  { id: 22, category: 'alphabet', label: 'Х', icon: '🇭', sub: 'Дактиль', desc: 'Указательный и средний параллельно, ладонь вбок.', video: '' },
-  { id: 23, category: 'alphabet', label: 'Ц', icon: '🇨', sub: 'Дактиль', desc: 'Указательный, средний, безымянный вверх, мизинец отведён.', video: '' },
-  { id: 24, category: 'alphabet', label: 'Ч', icon: '4️⃣', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вытянуты.', video: '' },
-  { id: 25, category: 'alphabet', label: 'Ш', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой прижат к ладони.', video: '' },
-  { id: 26, category: 'alphabet', label: 'Щ', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой отставлен.', video: '' },
-  { id: 27, category: 'alphabet', label: 'Ъ', icon: '🇷', sub: 'Дактиль', desc: 'Сжатый кулак с резким движением вправо.', video: '' },
-  { id: 28, category: 'alphabet', label: 'Ы', icon: '🇾', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, большой поднят.', video: '' },
-  { id: 29, category: 'alphabet', label: 'Ь', icon: '🇷', sub: 'Дактиль', desc: 'Кулак с мягким движением вниз.', video: '' },
-  { id: 30, category: 'alphabet', label: 'Э', icon: '🇪', sub: 'Дактиль', desc: 'Указательный и средний скрещены, ладонь раскрыта.', video: '' },
-  { id: 31, category: 'alphabet', label: 'Ю', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вверх.', video: '' },
-  { id: 32, category: 'alphabet', label: 'Я', icon: '🇾', sub: 'Дактиль', desc: 'Мизинец вперёд, остальные в кулак.', video: '' },
+  { id: 1, category: 'alphabet', label: 'А', icon: '🅰️', sub: 'Дактиль', desc: 'Кулак, большой палец сбоку.', video: '', hand: [2,0,0,0,0] },
+  { id: 2, category: 'alphabet', label: 'Б', icon: '🅱️', sub: 'Дактиль', desc: 'Ладонь раскрыта, большой палец прижат.', video: '', hand: [1,1,1,1,1] },
+  { id: 3, category: 'alphabet', label: 'В', icon: '✌️', sub: 'Дактиль', desc: 'Указательный и средний пальцы вверх, остальные в кулак.', video: '', hand: [0,1,1,0,0] },
+  { id: 4, category: 'alphabet', label: 'Г', icon: '🇬', sub: 'Дактиль', desc: 'Указательный палец вверх, остальные в кулак.', video: '', hand: [0,1,0,0,0] },
+  { id: 5, category: 'alphabet', label: 'Д', icon: '🇩', sub: 'Дактиль', desc: 'Три пальца вверх: указательный, средний и безымянный.', video: '', hand: [0,1,1,1,0] },
+  { id: 6, category: 'alphabet', label: 'Е', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой палец касается указательного.', video: '', hand: [3,3,0,0,0] },
+  { id: 7, category: 'alphabet', label: 'Ё', icon: '🇪', sub: 'Дактиль', desc: 'Пальцы сжаты, большой у указательного, с движением в сторону.', video: '', hand: [3,3,0,0,0] },
+  { id: 8, category: 'alphabet', label: 'Ж', icon: '🆖', sub: 'Дактиль', desc: 'Средний и безымянный скрещены, остальные в кулак.', video: '', hand: [0,0,4,4,0] },
+  { id: 9, category: 'alphabet', label: 'З', icon: '🇿', sub: 'Дактиль', desc: 'Указательный палец рисует зигзаг.', video: '', hand: [0,1,0,0,0] },
+  { id: 10, category: 'alphabet', label: 'И', icon: '🇮', sub: 'Дактиль', desc: 'Мизинец вверх, остальные в кулак.', video: '', hand: [0,0,0,0,1] },
+  { id: 11, category: 'alphabet', label: 'К', icon: '🇰', sub: 'Дактиль', desc: 'Указательный и большой вверх, остальные в кулак.', video: '', hand: [1,1,0,0,0] },
+  { id: 12, category: 'alphabet', label: 'Л', icon: '🇱', sub: 'Дактиль', desc: 'Ладонь раскрыта (буква L в дактиле).', video: '', hand: [2,1,1,1,1] },
+  { id: 13, category: 'alphabet', label: 'М', icon: '🇲', sub: 'Дактиль', desc: 'Большой палец прижат к мизинцу, остальные накрывают.', video: '', hand: [3,0,0,0,3] },
+  { id: 14, category: 'alphabet', label: 'Н', icon: '🇳', sub: 'Дактиль', desc: 'Указательный и средний вниз, остальные в кулак.', video: '', hand: [0,1,1,0,0] },
+  { id: 15, category: 'alphabet', label: 'О', icon: '🅾️', sub: 'Дактиль', desc: 'Все пальцы в кольцо с большим (жест "ок").', video: '', hand: [3,3,3,3,3] },
+  { id: 16, category: 'alphabet', label: 'П', icon: '🇵', sub: 'Дактиль', desc: 'Ладонь раскрыта, пальцы вместе, направлена вперёд.', video: '', hand: [1,1,1,1,1] },
+  { id: 17, category: 'alphabet', label: 'Р', icon: '🇷', sub: 'Дактиль', desc: 'Указательный и средний скрещены, остальные в кулак.', video: '', hand: [0,4,4,0,0] },
+  { id: 18, category: 'alphabet', label: 'С', icon: '🇨', sub: 'Дактиль', desc: 'Большой палец прикрывает сжатые пальцы сверху.', video: '', hand: [1,0,0,0,0] },
+  { id: 19, category: 'alphabet', label: 'Т', icon: '🇹', sub: 'Дактиль', desc: 'Кулак, большой палец зажат внутри.', video: '', hand: [0,0,0,0,0] },
+  { id: 20, category: 'alphabet', label: 'У', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, остальные в кулак ("коза").', video: '', hand: [0,1,0,0,1] },
+  { id: 21, category: 'alphabet', label: 'Ф', icon: '🇫', sub: 'Дактиль', desc: 'Большой палец упирается в указательный (кольцо), остальные раскрыты.', video: '', hand: [3,3,1,1,1] },
+  { id: 22, category: 'alphabet', label: 'Х', icon: '🇭', sub: 'Дактиль', desc: 'Указательный и средний параллельно, ладонь вбок.', video: '', hand: [0,1,1,0,0] },
+  { id: 23, category: 'alphabet', label: 'Ц', icon: '🇨', sub: 'Дактиль', desc: 'Указательный, средний, безымянный вверх, мизинец отведён.', video: '', hand: [0,1,1,1,2] },
+  { id: 24, category: 'alphabet', label: 'Ч', icon: '4️⃣', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вытянуты.', video: '', hand: [3,3,1,1,1] },
+  { id: 25, category: 'alphabet', label: 'Ш', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой прижат к ладони.', video: '', hand: [0,1,1,1,1] },
+  { id: 26, category: 'alphabet', label: 'Щ', icon: '🇸', sub: 'Дактиль', desc: 'Четыре пальца вверх, большой отставлен.', video: '', hand: [2,1,1,1,1] },
+  { id: 27, category: 'alphabet', label: 'Ъ', icon: '🇷', sub: 'Дактиль', desc: 'Сжатый кулак с резким движением вправо.', video: '', hand: [0,0,0,0,0] },
+  { id: 28, category: 'alphabet', label: 'Ы', icon: '🇾', sub: 'Дактиль', desc: 'Указательный и мизинец вверх, большой поднят.', video: '', hand: [1,1,0,0,1] },
+  { id: 29, category: 'alphabet', label: 'Ь', icon: '🇷', sub: 'Дактиль', desc: 'Кулак с мягким движением вниз.', video: '', hand: [0,0,0,0,0] },
+  { id: 30, category: 'alphabet', label: 'Э', icon: '🇪', sub: 'Дактиль', desc: 'Указательный и средний скрещены, ладонь раскрыта.', video: '', hand: [1,4,4,1,1] },
+  { id: 31, category: 'alphabet', label: 'Ю', icon: '🇺', sub: 'Дактиль', desc: 'Указательный и большой в кольцо, остальные вверх.', video: '', hand: [3,3,1,1,1] },
+  { id: 32, category: 'alphabet', label: 'Я', icon: '🇾', sub: 'Дактиль', desc: 'Мизинец вперёд, остальные в кулак.', video: '', hand: [0,0,0,0,1] },
 
   // --- Numbers ---
   { id: 33, category: 'numbers', label: 'Один', icon: '1️⃣', sub: 'Цифры', desc: 'Указательный палец вверх, остальные в кулак.', video: '' },
@@ -141,6 +141,46 @@ const SIGN_DATA = [
   { id: 77, category: 'colors', label: 'Белый', icon: '⚪', sub: 'Цвет', desc: 'Ладонь от груди вниз, пальцы вместе.', video: '' },
   { id: 78, category: 'colors', label: 'Чёрный', icon: '⚫', sub: 'Цвет', desc: 'Указательный палец проводит по брови.', video: '' },
 ];
+
+// ——————————————————————————————————————————————
+// Hand Visual — SVG diagram of dactyl hand shapes
+// fingers = [thumb, index, middle, ring, pinky]
+//   0 = closed (fist), 1 = extended up, 2 = side, 3 = touching thumb, 4 = crossed
+// ——————————————————————————————————————————————
+function HandVisual({ fingers, size = 100 }) {
+  if (!fingers) return null;
+  const [t, i, m, r, p] = fingers;
+  const skin = '#f5d0b0', stroke = '#d4a574';
+
+  const getF = (state, cx, baseY, w, h, sideA = 0) => {
+    if (state === 0) return null;
+    const rotCx = state === 3 ? cx - 2 : state === 4 ? cx + 3 : cx;
+    const rot = state === 1 ? 0 : state === 2 ? sideA || -35 : state === 3 ? -16 : 10;
+    const hMul = state === 2 ? 0.65 : state === 3 ? 0.45 : 1;
+    const xOff = state === 3 ? -2 : state === 4 ? 3 : 0;
+    return { x: cx - w/2 + xOff, y: baseY - h * hMul, w, h: h * hMul, rot, cx: rotCx, cy: baseY };
+  };
+
+  const fd = [
+    getF(t, 20, 86, 10, 32, -40),
+    getF(i, 33, 76, 8, 40),
+    getF(m, 43, 74, 8, 46),
+    getF(r, 53, 76, 8, 38),
+    getF(p, 62, 80, 7, 28, 25),
+  ].filter(Boolean);
+
+  return (
+    <svg width={size} height={size * 1.25} viewBox="0 0 80 110" style={{ display: 'block' }}>
+      <rect x="31" y="96" width="18" height="14" rx="4" fill={skin} stroke={stroke} strokeWidth="0.8" />
+      <rect x="26" y="76" width="28" height="22" rx="7" fill={skin} stroke={stroke} strokeWidth="0.8" />
+      {fd.map((f, idx) => (
+        <rect key={idx} x={f.x} y={f.y} width={f.w} height={f.h} rx={f.w / 2}
+          fill={skin} stroke={stroke} strokeWidth="0.8"
+          transform={f.rot ? `rotate(${f.rot}, ${f.cx}, ${f.cy})` : undefined} />
+      ))}
+    </svg>
+  );
+}
 
 
 const alertIcons = {
@@ -1294,7 +1334,9 @@ function App() {
                       {signProgress[item.id]?.learned ? (
                         <div style={{ position: 'absolute', top: '12px', right: '12px', background: '#22c55e', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '50px' }}>✓</div>
                       ) : null}
-                      <div style={{ fontSize: '4rem', marginBottom: '1.5rem', display: 'block' }}>{item.icon}</div>
+                      <div style={{ marginBottom: '1.25rem', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80px' }}>
+                        {item.hand ? <HandVisual fingers={item.hand} size={72} /> : <span style={{ fontSize: '4rem' }}>{item.icon}</span>}
+                      </div>
                       <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{item.label}</h3>
                       <span style={{ color: '#3b82f6', background: '#eff6ff', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700 }}>{item.sub}</span>
                       
@@ -1314,7 +1356,9 @@ function App() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem' }}>
                   {/* Left: Sign Info */}
                   <div className="hlp-feat-card" style={{ background: '#fff', padding: '3rem', borderRadius: '32px', boxShadow: '0 20px 60px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                    <div style={{ fontSize: '8rem', marginBottom: '2rem' }}>{currentSign?.icon}</div>
+                    <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'center' }}>
+                      {currentSign?.hand ? <HandVisual fingers={currentSign.hand} size={180} /> : <span style={{ fontSize: '8rem' }}>{currentSign?.icon}</span>}
+                    </div>
                     <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#0f172a', marginBottom: '1rem' }}>{currentSign?.label}</h2>
                     <div style={{ display: 'inline-block', background: '#eff6ff', color: '#3b82f6', padding: '0.5rem 1.5rem', borderRadius: '50px', fontWeight: 700, marginBottom: '2rem' }}>{currentSign?.sub}</div>
                     <p style={{ fontSize: '1.1rem', color: '#64748b', lineHeight: 1.6, textAlign: 'left', background: '#f8fafc', padding: '1.5rem', borderRadius: '20px', borderLeft: '4px solid #3b82f6' }}>
