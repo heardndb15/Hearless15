@@ -21,7 +21,8 @@
 |-----|----------|----------|
 | `XAI_API_KEY` | xAI Grok (`grok-beta`) | danger detection, summarization, chat |
 | `OPENAI_API_KEY` | OpenAI Whisper | STT fallback (transcribe) |
-| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Supabase | PostgreSQL database |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_KEY` | Supabase | PostgreSQL database |
+- Backend uses `SUPABASE_SERVICE_KEY` (service_role, bypasses RLS). Falls back to `SUPABASE_ANON_KEY` if service key not set.
 
 ### Subtitles (STT)
 

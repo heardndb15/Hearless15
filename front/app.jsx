@@ -234,6 +234,11 @@ function App() {
   ]);
   const [interimText, setInterimText] = useState('');  // live typing text
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historySessions, setHistorySessions] = useState([]);
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [sessionEntries, setSessionEntries] = useState([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   // === Alerts ===
   const [alerts, setAlerts] = useState([]);
@@ -404,6 +409,9 @@ function App() {
   useEffect(() => { isRecordingRef.current = isRecordingLecture; }, [isRecordingLecture]);
   useEffect(() => { lectureNotesRef.current = lectureNotes; }, [lectureNotes]);
 
+  const sessionIdRef = useRef(null);
+  const pendingSubtitlesRef = useRef([]);
+
   useEffect(() => { subtitlesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [subtitles, interimText]);
 
   useEffect(() => {
@@ -465,10 +473,21 @@ function App() {
       dashRecogRef.current = null;
     }
     setInterimText('');
-  }, []);
+    const sid = sessionIdRef.current;
+    const entries = pendingSubtitlesRef.current;
+    if (sid && entries.length > 0 && currentUser) {
+      fetch(`${API}/api/subtitles/save`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser, session_id: sid, entries })
+      }).catch(() => {});
+      pendingSubtitlesRef.current = [];
+    }
+  }, [currentUser]);
 
   const startDashSTT = useCallback(() => {
     stopDashSTT();
+    sessionIdRef.current = crypto.randomUUID();
+    pendingSubtitlesRef.current = [];
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
       setSrAvailable(false);
@@ -498,6 +517,7 @@ function App() {
             }
             return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
           });
+          pendingSubtitlesRef.current.push(text);
           checkDanger(text);
         } else {
           interim += result[0].transcript;
@@ -602,6 +622,36 @@ function App() {
     setSubtitles(prev => [...prev, {
       id: Date.now(), text, timestamp: new Date().toLocaleTimeString(), isFinal: true, isSystem: true
     }]);
+  };
+
+  // Subtitles history
+  const loadHistory = async () => {
+    if (!currentUser) return;
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch(`${API}/api/subtitles/sessions?username=${currentUser}`);
+      const data = await res.json();
+      setHistorySessions(data.sessions || []);
+      setShowHistory(true);
+      setSelectedSession(null);
+      setSessionEntries([]);
+    } catch {} finally { setIsLoadingHistory(false); }
+  };
+
+  const loadSession = async (sessionId) => {
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch(`${API}/api/subtitles/session/${sessionId}`);
+      const data = await res.json();
+      setSelectedSession(sessionId);
+      setSessionEntries(data.entries || []);
+    } catch {} finally { setIsLoadingHistory(false); }
+  };
+
+  const closeHistory = () => {
+    setShowHistory(false);
+    setSelectedSession(null);
+    setSessionEntries([]);
   };
 
   // Danger detection — calls backend (AI) in background
@@ -1128,6 +1178,72 @@ function App() {
                 </div>
               </div>
             </div>
+
+            {/* ─── Subtitle history ─── */}
+            {showHistory ? (
+              <div className="hlp-feat-card" style={{ marginTop: '1rem', background: '#ffffff', borderRadius: '28px', border: '1px solid #e2e8f0', padding: '2.5rem', boxShadow: '0 10px 40px rgba(0,0,0,0.03)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                  <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <MessageSquare size={20} color="#3b82f6" /> История субтитров
+                  </h3>
+                  <button onClick={closeHistory} style={{ background: '#f1f5f9', border: 'none', padding: '0.5rem 1rem', borderRadius: '12px', color: '#64748b', fontWeight: 600, cursor: 'pointer' }}>
+                    <X size={16} /> Закрыть
+                  </button>
+                </div>
+
+                {selectedSession ? (
+                  <div>
+                    <button onClick={() => { setSelectedSession(null); setSessionEntries([]); }}
+                      style={{ background: 'none', border: 'none', color: '#3b82f6', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                      <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} /> Назад к сессиям
+                    </button>
+                    {isLoadingHistory ? (
+                      <p style={{ color: '#94a3b8', textAlign: 'center' }}>Загрузка...</p>
+                    ) : (
+                      <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        {sessionEntries.map((e, i) => (
+                          <div key={i} style={{ padding: '1rem 1.25rem', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                            <p style={{ margin: 0, fontSize: '1rem', color: '#0f172a' }}>{e.text}</p>
+                            <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{e.timestamp}</small>
+                          </div>
+                        ))}
+                        {sessionEntries.length === 0 && <p style={{ color: '#94a3b8', textAlign: 'center' }}>Нет записей</p>}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '400px', overflowY: 'auto' }}>
+                    {isLoadingHistory ? (
+                      <p style={{ color: '#94a3b8', textAlign: 'center' }}>Загрузка...</p>
+                    ) : historySessions.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+                        <MessageSquare size={40} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                        <p>История пуста</p>
+                      </div>
+                    ) : (
+                      historySessions.map(s => (
+                        <div key={s.session_id} onClick={() => loadSession(s.session_id)}
+                          style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '16px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <p style={{ margin: 0, fontWeight: 600, color: '#0f172a', flex: 1 }}>{s.first_text}</p>
+                            <span style={{ background: '#eff6ff', color: '#3b82f6', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              {s.count} зап.
+                            </span>
+                          </div>
+                          <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{s.timestamp}</small>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : currentUser && (
+              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                <button onClick={loadHistory} style={{ padding: '0.75rem 1.5rem', borderRadius: '14px', border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+                  <MessageSquare size={16} /> История субтитров
+                </button>
+              </div>
+            )}
           </div>
         )}
 

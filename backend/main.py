@@ -71,7 +71,7 @@ async def startup_event():
 
     # ── Supabase ──
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
-    supabase_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "").strip()
     if supabase_url and supabase_key:
         try:
             supabase = create_client(supabase_url, supabase_key)
@@ -82,7 +82,7 @@ async def startup_event():
             logger.error(f"Supabase init failed: {e}")
             supabase = None
     else:
-        logger.warning("SUPABASE_URL / SUPABASE_ANON_KEY not set — DB disabled")
+        logger.warning("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — DB disabled")
 
     logger.info(f"Hearless v3.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'} | Supabase={'yes' if supabase else 'no'}")
 
@@ -419,6 +419,69 @@ def save_lecture(payload: dict):
     except Exception as e:
         logger.error(f"Save lecture error: {e}")
         return {"success": False}
+
+
+# --- Subtitles History ---
+
+@app.post("/api/subtitles/save")
+def save_subtitles(payload: dict):
+    if not supabase:
+        return {"success": False}
+    username = payload.get("username")
+    session_id = payload.get("session_id")
+    entries = payload.get("entries", [])
+    if not username or not session_id or not entries:
+        return {"success": False}
+    try:
+        rows = [{"username": username, "session_id": session_id, "text": e} for e in entries]
+        supabase.table("subtitles").insert(rows).execute()
+        return {"success": True, "count": len(rows)}
+    except Exception as e:
+        logger.error(f"Save subtitles error: {e}")
+        return {"success": False}
+
+
+@app.get("/api/subtitles/sessions")
+def list_subtitle_sessions(username: str):
+    if not supabase:
+        return {"sessions": []}
+    try:
+        result = supabase.table("subtitles") \
+            .select("session_id, text, timestamp") \
+            .eq("username", username) \
+            .order("timestamp", desc=True) \
+            .execute()
+        sessions = {}
+        for row in result.data:
+            sid = row["session_id"]
+            if sid not in sessions:
+                sessions[sid] = {
+                    "session_id": sid,
+                    "first_text": row["text"][:100],
+                    "timestamp": row["timestamp"],
+                    "count": 0
+                }
+            sessions[sid]["count"] += 1
+        return {"sessions": list(sessions.values())}
+    except Exception as e:
+        logger.error(f"List subtitle sessions error: {e}")
+        return {"sessions": []}
+
+
+@app.get("/api/subtitles/session/{session_id}")
+def get_subtitle_session(session_id: str):
+    if not supabase:
+        return {"entries": []}
+    try:
+        result = supabase.table("subtitles") \
+            .select("text, timestamp") \
+            .eq("session_id", session_id) \
+            .order("timestamp") \
+            .execute()
+        return {"entries": result.data}
+    except Exception as e:
+        logger.error(f"Get subtitle session error: {e}")
+        return {"entries": []}
 
 
 # --- Danger Detection ---
