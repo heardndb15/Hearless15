@@ -16,6 +16,8 @@ from openai import AsyncOpenAI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from signflow_model import load_model, recognize, recognize_batch, set_labels
+from gestures_db import GESTURES, get_gestures, get_gesture_by_id, get_topics
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("HearlessBackend")
@@ -83,6 +85,15 @@ async def startup_event():
             supabase = None
     else:
         logger.warning("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — DB disabled")
+
+    # ── SignFlow ──
+    try:
+        model = load_model()
+        labels = [g["name"] for g in sorted(GESTURES, key=lambda x: x["id"])]
+        set_labels(labels)
+        logger.info(f"SignFlow loaded with {len(labels)} gestures")
+    except Exception as e:
+        logger.error(f"SignFlow init failed: {e}")
 
     logger.info(f"Hearless v3.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'} | Supabase={'yes' if supabase else 'no'}")
 
@@ -724,6 +735,140 @@ def get_sign_stats(username: str):
     except Exception as e:
         logger.error(f"Get sign stats error: {e}")
         return {"learned": 0, "practiced": 0, "correct": 0, "wrong": 0, "accuracy": None, "total": 78}
+
+
+# ======================= SIGNFLOW / GESTURES =======================
+
+frame_counter = 0
+
+
+@app.post("/api/recognize")
+def recognize_gesture(payload: dict):
+    """
+    Распознаёт жест по одному фрейму.
+    Принимает: { "frame": "base64_jpg", "batch": ["b64", ...] }
+    Возвращает: { "gesture", "confidence", "top_k", "time_ms" }
+    """
+    global frame_counter
+    frame_counter += 1
+
+    # Обрабатываем только каждый 3-й фрейм для скорости
+    if frame_counter % 3 != 0 and "batch" not in payload:
+        return {"gesture": None, "confidence": 0, "skipped": True}
+
+    try:
+        if "batch" in payload and isinstance(payload["batch"], list):
+            result = recognize_batch(payload["batch"])
+        else:
+            frame = payload.get("frame", "")
+            if not frame:
+                return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0, "error": "No frame"}
+            result = recognize(frame)
+
+        result["skipped"] = False
+        return result
+    except Exception as e:
+        logger.error(f"Recognize error: {e}")
+        return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0, "error": str(e)}
+
+
+@app.get("/api/gestures")
+def list_gestures(topic: str = "", difficulty: int = 0, search: str = ""):
+    """Возвращает список жестов с фильтрацией."""
+    diff = difficulty if difficulty > 0 else None
+    topic_param = topic if topic else None
+    result = get_gestures(topic=topic_param, difficulty=diff, search=search)
+    return {
+        "gestures": result,
+        "total": len(result),
+        "topics": get_topics(),
+    }
+
+
+@app.get("/api/gestures/topics")
+def list_topics():
+    """Возвращает темы жестов с количеством."""
+    return {"topics": get_topics()}
+
+
+@app.get("/api/gestures/{gesture_id}")
+def get_gesture(gesture_id: int):
+    """Возвращает один жест по ID."""
+    g = get_gesture_by_id(gesture_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Жест не найден")
+    return g
+
+
+@app.get("/api/gestures/stats/{username}")
+def get_user_gesture_stats(username: str):
+    """Статистика пользователя по жестам (сколько выучено из 1000)."""
+    if not supabase:
+        return {"learned": 0, "total": len(GESTURES), "by_topic": []}
+    try:
+        result = supabase.table("user_progress").select("*").eq("username", username).execute()
+        rows = result.data
+        learned = sum(1 for r in rows if r.get("learned"))
+        by_topic = {}
+        for g in GESTURES:
+            topic = g["topic"]
+            if topic not in by_topic:
+                by_topic[topic] = {"topic": topic, "total": 0, "learned": 0}
+            by_topic[topic]["total"] += 1
+        for r in rows:
+            if r.get("learned"):
+                gid = r.get("gesture_id")
+                for g in GESTURES:
+                    if g["id"] == gid and g["topic"] in by_topic:
+                        by_topic[g["topic"]]["learned"] += 1
+        return {
+            "learned": learned,
+            "total": len(GESTURES),
+            "by_topic": list(by_topic.values()),
+        }
+    except Exception as e:
+        logger.error(f"Gesture stats error: {e}")
+        return {"learned": 0, "total": len(GESTURES), "by_topic": []}
+
+
+@app.post("/api/gestures/progress")
+def save_gesture_progress(payload: dict):
+    """
+    Сохраняет прогресс пользователя по жесту.
+    Таблица: user_progress (user_id, gesture_id, learned, attempts, best_confidence)
+    """
+    if not supabase:
+        return {"success": False}
+    username = payload.get("username")
+    gesture_id = payload.get("gesture_id")
+    if not username or not gesture_id:
+        return {"success": False}
+    try:
+        # Проверяем, есть ли запись
+        existing = supabase.table("user_progress") \
+            .select("*") \
+            .eq("username", username) \
+            .eq("gesture_id", gesture_id) \
+            .execute()
+        if existing.data:
+            row = existing.data[0]
+            supabase.table("user_progress").update({
+                "learned": payload.get("learned", row.get("learned", False)),
+                "attempts": row.get("attempts", 0) + 1,
+                "best_confidence": max(row.get("best_confidence", 0), payload.get("confidence", 0)),
+            }).eq("id", row["id"]).execute()
+        else:
+            supabase.table("user_progress").insert({
+                "username": username,
+                "gesture_id": gesture_id,
+                "learned": payload.get("learned", False),
+                "attempts": 1,
+                "best_confidence": payload.get("confidence", 0),
+            }).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Save progress error: {e}")
+        return {"success": False}
 
 
 if __name__ == "__main__":
