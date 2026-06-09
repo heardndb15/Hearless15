@@ -519,6 +519,30 @@ def get_subtitle_session(session_id: str):
         return {"entries": []}
 
 
+@app.delete("/api/subtitles/session/{session_id}")
+def delete_subtitle_session(session_id: str):
+    if not supabase:
+        return {"success": False}
+    try:
+        supabase.table("subtitles").delete().eq("session_id", session_id).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Delete subtitle session error: {e}")
+        return {"success": False}
+
+
+@app.delete("/api/subtitles/clear/{username}")
+def clear_subtitle_history(username: str):
+    if not supabase:
+        return {"success": False}
+    try:
+        supabase.table("subtitles").delete().eq("username", username).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Clear subtitle history error: {e}")
+        return {"success": False}
+
+
 # --- Danger Detection ---
 
 @app.post("/api/detect-danger")

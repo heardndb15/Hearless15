@@ -194,6 +194,15 @@ const alertIcons = {
 // Is SpeechRecognition available in this browser?
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
+// local text formatting (no AI)
+function fixText(text) {
+  text = text.trim();
+  if (!text) return text;
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  if (!/[.!?…]$/.test(text)) text += '.';
+  return text;
+}
+
 // ——————————————————————————————————————————————
 // App
 // ——————————————————————————————————————————————
@@ -222,6 +231,22 @@ function App() {
   useEffect(() => {
     setSrAvailable(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
   }, []);
+
+  // Flush pending subtitles from localStorage to backend on mount
+  useEffect(() => {
+    if (!currentUser) return;
+    try {
+      const pending = JSON.parse(localStorage.getItem('hearless_pending_subs') || '[]');
+      if (pending.length === 0) return;
+      pending.forEach(p => {
+        fetch(`${API}/api/subtitles/save`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: p.username, session_id: p.session_id, entries: p.entries })
+        }).catch(() => {});
+      });
+      localStorage.removeItem('hearless_pending_subs');
+    } catch {}
+  }, [currentUser]);
 
   // === Navigation ===
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -489,7 +514,16 @@ function App() {
       fetch(`${API}/api/subtitles/save`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: currentUser, session_id: sid, entries })
-      }).catch(() => {});
+      }).then(r => r.json()).then(d => {
+        if (!d.success) throw new Error('save failed');
+      }).catch(() => {
+        // localStorage fallback
+        try {
+          const pending = JSON.parse(localStorage.getItem('hearless_pending_subs') || '[]');
+          pending.push({ username: currentUser, session_id: sid, entries, timestamp: Date.now() });
+          localStorage.setItem('hearless_pending_subs', JSON.stringify(pending.slice(-10)));
+        } catch {}
+      });
       pendingSubtitlesRef.current = [];
       // auto-summarize
       if (autoSummarize) {
@@ -538,17 +572,12 @@ function App() {
             }
             return [...prev, { id, text, timestamp, isFinal: true }].slice(-30);
           });
-          pendingSubtitlesRef.current.push(text);
-          checkDanger(text);
-          // format in background
-          fetch(`${API}/api/format-text`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text })
-          }).then(r => r.json()).then(d => {
-            if (d.text && d.text !== text) {
-              setSubtitles(prev => prev.map(e => e.id === id ? { ...e, text: d.text } : e));
-            }
-          }).catch(() => {});
+          const fixed = fixText(text);
+          if (fixed !== text) {
+            setSubtitles(prev => prev.map(e => e.id === id ? { ...e, text: fixed } : e));
+          }
+          pendingSubtitlesRef.current.push(fixed);
+          checkDanger(fixed);
           // translate in background if language selected
           if (translateLangRef.current) {
             fetch(`${API}/api/translate-subtitle`, {
@@ -1319,9 +1348,17 @@ function App() {
                   <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <MessageSquare size={20} color="#3b82f6" /> История субтитров
                   </h3>
-                  <button onClick={closeHistory} style={{ background: '#f1f5f9', border: 'none', padding: '0.5rem 1rem', borderRadius: '12px', color: '#64748b', fontWeight: 600, cursor: 'pointer' }}>
-                    <X size={16} /> Закрыть
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {!selectedSession && historySessions.length > 0 && (
+                      <button onClick={async () => { if (!confirm('Очистить всю историю?')) return; await fetch(`${API}/api/subtitles/clear/${currentUser}`, { method: 'DELETE' }); loadHistory(); }}
+                        style={{ background: '#fef2f2', border: 'none', padding: '0.5rem 0.75rem', borderRadius: '10px', color: '#ef4444', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <X size={14} /> Очистить всё
+                      </button>
+                    )}
+                    <button onClick={closeHistory} style={{ background: '#f1f5f9', border: 'none', padding: '0.5rem 1rem', borderRadius: '12px', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <X size={14} /> Закрыть
+                    </button>
+                  </div>
                 </div>
 
                 {selectedSession ? (
@@ -1339,6 +1376,10 @@ function App() {
                         <button onClick={() => handleSaveToLecture(sessionEntries)} title="Сохранить как лекцию"
                           style={{ background: '#eff6ff', border: 'none', color: '#3b82f6', padding: '0.4rem 0.75rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                           <BookOpen size={12} /> В лекции
+                        </button>
+                        <button onClick={async () => { if (!confirm('Удалить эту сессию?')) return; await fetch(`${API}/api/subtitles/session/${selectedSession}`, { method: 'DELETE' }); setSelectedSession(null); setSessionEntries([]); loadHistory(); }} title="Удалить сессию"
+                          style={{ background: '#fef2f2', border: 'none', color: '#ef4444', padding: '0.4rem 0.75rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <X size={12} /> Удалить
                         </button>
                       </div>
                     </div>
