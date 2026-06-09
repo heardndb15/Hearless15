@@ -11,6 +11,10 @@ import {
 
 import Landing from './src/components/Landing';
 import Auth from './src/components/Auth';
+import ProgressHero from './src/components/ProgressHero';
+import CategoryFilter from './src/components/CategoryFilter';
+import GestureCard from './src/components/GestureCard';
+import LearningPath from './src/components/LearningPath';
 
 // ── API base URL ─────────────────────────────────────────────────────
 // Dev  → http://localhost:8000  (uvicorn --reload)
@@ -303,6 +307,10 @@ function App() {
   const [academySearch, setAcademySearch] = useState('');
   const [signProgress, setSignProgress] = useState({});
   const [signStats, setSignStats] = useState(null);
+  const [dailyGoal, setDailyGoal] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hearless_daily_goal_web')) || { done: 0, target: 5, date: null }; }
+    catch { return { done: 0, target: 5, date: null }; }
+  });
   
   // Load sign progress from backend
   useEffect(() => {
@@ -322,6 +330,28 @@ function App() {
       .then(d => setSignStats(d))
       .catch(() => {});
   }, [currentUser]);
+
+  // ── Daily goal check ────────────────────────────────────────────
+  useEffect(() => {
+    const today = new Date().toDateString();
+    if (dailyGoal.date !== today) {
+      const reset = { done: 0, target: 5, date: today };
+      setDailyGoal(reset);
+      localStorage.setItem('hearless_daily_goal_web', JSON.stringify(reset));
+    }
+  }, []);
+
+  const getGestureStatus = (gestureId) => {
+    const p = signProgress?.[gestureId];
+    if (!p) return 'new';
+    if (p.learned) return 'learned';
+    if ((p.attempts || 0) > 0) return 'in_progress';
+    return 'new';
+  };
+
+  const completedIds = Object.entries(signProgress || {})
+    .filter(([, p]) => p.learned)
+    .map(([id]) => Number(id));
 
   // === Diagnostics ===
   const [diagResult, setDiagResult] = useState(null);
@@ -1618,138 +1648,157 @@ function App() {
           <div style={s.fadeIn}>
             {!isQuizMode && !isLearningMode ? (
               <>
-                <header style={s.pageHeader}>
-                  <div>
-                    <h1 style={s.h1}>Академия жестов</h1>
-                    <p style={s.sub}>Визуальный словарь для общения без границ</p>
+                {/* ===== HERO БЛОК ===== */}
+                {currentUser && (
+                  <ProgressHero stats={signStats} streak={0} />
+                )}
+
+                {/* ===== ЕЖЕДНЕВНАЯ ЦЕЛЬ ===== */}
+                {currentUser && (
+                  <div style={{
+                    background: '#ffffff',
+                    borderRadius: '24px',
+                    padding: '20px',
+                    margin: '0 0 12px',
+                    boxShadow: '0 4px 12px rgba(152,202,225,0.15)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#214559' }}>Цель дня</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#3c95bb' }}>{dailyGoal.done} ⚡</div>
+                    </div>
+                    <div style={{ height: 8, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden', marginBottom: 14 }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${Math.min(100, (dailyGoal.done / dailyGoal.target) * 100)}%`,
+                        background: '#3c95bb',
+                        borderRadius: 4,
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {Array.from({ length: dailyGoal.target }, (_, i) => (
+                        <div key={i} style={{
+                          width: 28, height: 28, borderRadius: '50%',
+                          border: '2px solid #cbd5e1',
+                          background: i < dailyGoal.done ? '#22c55e' : 'transparent',
+                          borderColor: i < dailyGoal.done ? '#22c55e' : '#cbd5e1',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {i < dailyGoal.done && <div style={{ color: '#fff', fontSize: 14, fontWeight: 800 }}>✓</div>}
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#64748b', marginLeft: 6 }}>
+                        {dailyGoal.done} из {dailyGoal.target}
+                      </div>
+                    </div>
+                    {dailyGoal.done >= dailyGoal.target && (
+                      <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: '#22c55e', textAlign: 'center' }}>
+                        🎉 Цель выполнена!
+                      </div>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input 
-                      type="text" 
-                      placeholder="Найти жест..." 
+                )}
+
+                {/* ===== HEADER ===== */}
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  flexWrap: 'wrap', gap: '0.75rem', marginBottom: '12px',
+                }}>
+                  <div>
+                    <h1 style={{ ...s.h1, fontSize: '1.5rem', margin: 0 }}>Жестовый язык</h1>
+                    <p style={{ ...s.sub, margin: 0, fontSize: '0.9rem' }}>Визуальный словарь</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      placeholder="Найти жест..."
                       value={academySearch}
                       onChange={e => setAcademySearch(e.target.value)}
-                      style={{ ...s.input, width: '180px', padding: '0.65rem 1rem' }}
+                      style={{
+                        padding: '0.5rem 0.75rem', borderRadius: '12px', border: '1px solid #cce4f0',
+                        fontSize: '0.85rem', outline: 'none', width: '140px', background: '#fff',
+                        color: '#214559', fontFamily: 'inherit',
+                      }}
                     />
-                    <button 
-                      onClick={() => startQuiz(academyCategory)}
-                      style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #3b82f6, #2dd4bf)', border: 'none', padding: '0.75rem 1.25rem', borderRadius: '14px', fontSize: '0.9rem' }}>
-                      <Zap size={16} /> Тренажёр
+                    <button onClick={() => startQuiz(academyCategory)}
+                      style={{
+                        background: 'linear-gradient(135deg, #3c95bb, #2c789d)', border: 'none',
+                        padding: '0.6rem 1rem', borderRadius: '14px', color: '#fff',
+                        fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      }}>
+                      <Zap size={14} /> Тренажёр
                     </button>
                     {currentUser && (
-                      <button 
-                        onClick={startWeakPractice}
-                        style={{ ...s.btnPrimary, background: 'linear-gradient(135deg, #f59e0b, #ef4444)', border: 'none', padding: '0.75rem 1.25rem', borderRadius: '14px', fontSize: '0.9rem' }}>
-                        <AlertTriangle size={16} /> Сложные
+                      <button onClick={startWeakPractice}
+                        style={{
+                          background: 'linear-gradient(135deg, #f59e0b, #ef4444)', border: 'none',
+                          padding: '0.6rem 1rem', borderRadius: '14px', color: '#fff',
+                          fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: '0.4rem',
+                        }}>
+                        <AlertTriangle size={14} /> Сложные
                       </button>
                     )}
                   </div>
-                </header>
-
-                <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2.5rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-                  {[
-                    { id: 'all', label: 'Все' },
-                    { id: 'alphabet', label: 'Алфавит' },
-                    { id: 'numbers', label: 'Цифры' },
-                    { id: 'greetings', label: 'Приветствия' },
-                    { id: 'emergency', label: 'Экстренные' },
-                    { id: 'common', label: 'Общие' },
-                    { id: 'colors', label: 'Цвета' },
-                  ].map(cat => (
-                    <button
-                      key={cat.id}
-                      onClick={() => setAcademyCategory(cat.id)}
-                      style={{
-                        padding: '0.65rem 1.25rem',
-                        borderRadius: '12px',
-                        border: 'none',
-                        background: academyCategory === cat.id ? '#3b82f6' : '#fff',
-                        color: academyCategory === cat.id ? '#fff' : '#64748b',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-                        whiteSpace: 'nowrap',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      {cat.label}
-                    </button>
-                  ))}
                 </div>
-                
-                {signStats && (
-                  <>
-                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#0f172a' }}>{signStats.learned || 0}<span style={{ fontSize: '0.9rem', color: '#94a3b8', fontWeight: 500 }}>/{signStats.total || SIGN_DATA.length}</span></div>
-                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Изучено жестов</div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: '#0f172a' }}>{signStats.practiced || 0}</div>
-                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Всего практик</div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: '150px', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ fontSize: '1.75rem', fontWeight: 900, color: signStats.accuracy >= 80 ? '#10b981' : (signStats.accuracy >= 50 ? '#f59e0b' : '#ef4444') }}>
-                        {signStats.accuracy != null ? `${Math.round(signStats.accuracy)}%` : '—'}
-                      </div>
-                      <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Точность</div>
-                    </div>
-                  </div>
-                  {/* Per-category progress */}
-                  {currentUser && (
-                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
-                      {[['alphabet','Алфавит'], ['numbers','Цифры'], ['greetings','Приветствия'], ['emergency','Экстренные'], ['common','Общие'], ['colors','Цвета']].map(([catId, catLabel]) => {
-                        const total = SIGN_DATA.filter(s => s.category === catId).length;
-                        const learned = Object.entries(signProgress).filter(([sid, p]) => {
-                          const sign = SIGN_DATA.find(s => s.id === sid);
-                          return sign && sign.category === catId && p.learned;
-                        }).length;
-                        return (
-                          <div key={catId} style={{ width: 'calc(16.66% - 0.85rem)', minWidth: '100px', background: '#fff', padding: '0.75rem', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center' }}>
-                            <div style={{ fontSize: '1rem', fontWeight: 800, color: learned === total ? '#10b981' : '#0f172a' }}>{learned}/{total}</div>
-                            <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '0.15rem' }}>{catLabel}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  </>
-                )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '2rem' }}>
+                {/* ===== КАТЕГОРИИ ===== */}
+                <CategoryFilter
+                  categories={[
+                    { key: 'all', label: 'Все' },
+                    { key: 'alphabet', label: 'Алфавит' },
+                    { key: 'numbers', label: 'Цифры' },
+                    { key: 'greetings', label: 'Приветствия' },
+                    { key: 'emergency', label: 'Экстренные' },
+                    { key: 'common', label: 'Общие' },
+                    { key: 'colors', label: 'Цвета' },
+                  ]}
+                  activeCategory={academyCategory}
+                  onSelect={setAcademyCategory}
+                />
+
+                {/* ===== СЕТКА ЖЕСТОВ ===== */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                  gap: '12px',
+                  padding: '4px 0',
+                }}>
                   {SIGN_DATA
                     .filter(s => academyCategory === 'all' || s.category === academyCategory)
                     .filter(s => s.label.toLowerCase().includes(academySearch.toLowerCase()))
-                    .map((item) => (
-                    <div key={item.id} className="hlp-feat-card" 
-                      onClick={() => startLearning(item)}
-                      style={{ 
-                        background: '#fff', 
-                        borderRadius: '28px', 
-                        padding: '2.5rem 2rem', 
-                        textAlign: 'center',
-                        border: signProgress[item.id]?.learned ? '1px solid #86efac' : '1px solid #e2e8f0',
-                        cursor: 'pointer',
-                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                        boxShadow: signProgress[item.id]?.learned ? '0 4px 20px rgba(34, 197, 94, 0.1)' : '0 10px 40px rgba(0,0,0,0.03)',
-                        position: 'relative',
-                        overflow: 'hidden'
-                      }}>
-                      {signProgress[item.id]?.learned ? (
-                        <div style={{ position: 'absolute', top: '12px', right: '12px', background: '#22c55e', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '50px' }}>✓</div>
-                      ) : null}
-                      <div style={{ marginBottom: '1.25rem', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80px' }}>
-                        {item.hand ? <HandVisual fingers={item.hand} size={72} /> : <span style={{ fontSize: '4rem' }}>{item.icon}</span>}
-                      </div>
-                      <h3 style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.25rem', marginBottom: '0.5rem' }}>{item.label}</h3>
-                      <span style={{ color: '#3b82f6', background: '#eff6ff', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700 }}>{item.sub}</span>
-                      
-                      <div style={{ marginTop: '1.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '1rem' }}>
-                        <button style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}>Изучить →</button>
-                      </div>
+                    .map((item, idx) => (
+                      <GestureCard
+                        key={item.id}
+                        gesture={item}
+                        status={getGestureStatus(item.id)}
+                        isLocked={false}
+                        onPress={() => startLearning(item)}
+                        style={{
+                          animation: 'fadeUp 0.5s ease forwards',
+                          animationDelay: `${idx * 60}ms`,
+                          opacity: 0,
+                        }}
+                      />
+                    ))}
+                  {SIGN_DATA.filter(s => academyCategory === 'all' || s.category === academyCategory)
+                    .filter(s => s.label.toLowerCase().includes(academySearch.toLowerCase())).length === 0 && (
+                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40, color: '#94a3b8', fontWeight: 600 }}>
+                      Нет жестов в этой категории
                     </div>
-                  ))}
+                  )}
                 </div>
+
+                {/* ===== ПУТЬ ОБУЧЕНИЯ ===== */}
+                {currentUser && (
+                  <LearningPath
+                    gestures={SIGN_DATA}
+                    completedIds={completedIds}
+                    currentId={SIGN_DATA.find(s => !completedIds.includes(s.id))?.id || SIGN_DATA[0]?.id}
+                    onSelectGesture={startLearning}
+                  />
+                )}
               </>
             ) : isLearningMode ? (
               <div style={{ maxWidth: '900px', margin: '0 auto', animation: 'fadeIn 0.5s' }}>
