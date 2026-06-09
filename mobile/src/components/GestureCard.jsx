@@ -1,165 +1,261 @@
 /**
- * GestureCard.jsx — карточка одного жеста.
+ * GestureCard.jsx — ПОЛНЫЙ РЕДИЗАЙН карточки жеста.
  *
- * Показывает: название, описание, сложность, прогресс пользователя.
- * Кнопки: "Практиковать", "Добавить в избранное".
+ * Дизайн:
+ *   - Большая иллюстрация руки на фоне #e6f1f8
+ *   - Название жеста крупно жирным
+ *   - Тег категории
+ *   - Полоска прогресса внизу (не изучен / в процессе / изучен)
+ *   - Иконка замка если не открыт
+ *   - Зелёная галочка в углу если изучен
+ *   - Мягкая тень через #98cae1
+ *   - Анимация scale 0.97 при нажатии
+ *   - Анимация появления fade-up с задержкой
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, Animated, StyleSheet, Dimensions } from 'react-native';
 
-const DIFFICULTY_STARS = {
-  1: '⭐',
-  2: '⭐⭐',
-  3: '⭐⭐⭐',
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2; // 2 колонки с отступами
+
+// Маленькие SVG-подобные иллюстрации для разных жестов
+const HAND_ICONS = {
+  alphabet: '🖐️',
+  numbers: '🔢',
+  greetings: '👋',
+  emergency: '🆘',
+  common: '🤟',
+  colors: '🎨',
+  default: '✋',
 };
 
-const DIFFICULTY_LABEL = {
-  1: 'Простой',
-  2: 'Средний',
-  3: 'Сложный',
-};
+function getHandIcon(category) {
+  return HAND_ICONS[category] || HAND_ICONS.default;
+}
+
+function getProgressColor(status) {
+  switch (status) {
+    case 'learned': return '#22c55e';
+    case 'in_progress': return '#3c95bb';
+    default: return '#e2e8f0';
+  }
+}
+
+function getProgressWidth(status) {
+  switch (status) {
+    case 'learned': return '100%';
+    case 'in_progress': return '50%';
+    default: return '0%';
+  }
+}
 
 export default function GestureCard({
   gesture,
-  progress,       // { learned, attempts, best_confidence }
-  onPractice,     // callback
-  onToggleFavorite,
-  isFavorite,
+  status = 'new',        // 'new' | 'in_progress' | 'learned'
+  isLocked = false,
+  index = 0,
+  onPress,
 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(30)).current;
+
+  // Анимация появления (fade-up с задержкой)
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 500,
+        delay: index * 80,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 500,
+        delay: index * 80,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const handlePressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.97,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1,
+      friction: 4,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const category = gesture.category || gesture.topic || 'common';
+  const name = gesture.label || gesture.name || '';
+  const sub = gesture.sub || '';
+
   return (
-    <View style={styles.card}>
-      {/* Верхняя строка: название + сложность */}
-      <View style={styles.header}>
-        <Text style={styles.name}>{gesture.name}</Text>
-        <Text style={styles.difficulty}>
-          {DIFFICULTY_STARS[gesture.difficulty] || '⭐'}
-        </Text>
-      </View>
-
-      <Text style={styles.ru}>{gesture.ru}</Text>
-      <Text style={styles.topic}>{gesture.topic}</Text>
-      <Text style={styles.desc} numberOfLines={2}>{gesture.desc}</Text>
-
-      {/* Прогресс */}
-      {progress && (
-        <View style={styles.progressRow}>
-          <View style={[styles.progressBar, {
-            width: `${Math.min(100, (progress.best_confidence || 0) * 100)}%`,
-          }]} />
-          <Text style={styles.progressText}>
-            {progress.learned ? '✅ Выучено' : `${Math.round((progress.best_confidence || 0) * 100)}%`}
-          </Text>
-        </View>
-      )}
-
-      {/* Кнопки */}
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.practiceBtn} onPress={onPractice}>
-          <Text style={styles.practiceBtnText}>Практиковать</Text>
-        </TouchableOpacity>
-        {onToggleFavorite && (
-          <TouchableOpacity style={styles.favBtn} onPress={onToggleFavorite}>
-            <Text style={styles.favBtnText}>{isFavorite ? '★' : '☆'}</Text>
-          </TouchableOpacity>
+    <Animated.View style={{
+      opacity,
+      transform: [{ translateY }, { scale }],
+      width: CARD_WIDTH,
+    }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+        disabled={isLocked}
+        style={[
+          styles.card,
+          isLocked && styles.cardLocked,
+        ]}
+      >
+        {/* Иконка замка */}
+        {isLocked && (
+          <View style={styles.lockBadge}>
+            <Text style={styles.lockIcon}>🔒</Text>
+          </View>
         )}
-      </View>
-    </View>
+
+        {/* Галочка изучено */}
+        {status === 'learned' && (
+          <View style={styles.checkBadge}>
+            <Text style={styles.checkIcon}>✓</Text>
+          </View>
+        )}
+
+        {/* Иллюстрация руки */}
+        <View style={styles.illustration}>
+          <Text style={styles.handIcon}>{getHandIcon(category)}</Text>
+        </View>
+
+        {/* Название жеста */}
+        <Text style={styles.name} numberOfLines={1}>
+          {name}
+        </Text>
+
+        {/* Тег категории */}
+        {sub ? (
+          <View style={styles.categoryTag}>
+            <Text style={styles.categoryText} numberOfLines={1}>{sub}</Text>
+          </View>
+        ) : null}
+
+        {/* Полоска прогресса */}
+        <View style={styles.progressTrack}>
+          <View style={[
+            styles.progressFill,
+            {
+              width: getProgressWidth(status),
+              backgroundColor: getProgressColor(status),
+            },
+          ]} />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#cce4f0',
-    borderRadius: 18,
-    padding: 18,
-    marginVertical: 6,
-    marginHorizontal: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
+    padding: 14,
+    marginBottom: 14,
+    marginHorizontal: 6,
+    shadowColor: '#98cae1',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 8,
+    position: 'relative',
+    overflow: 'visible',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+  cardLocked: {
+    opacity: 0.65,
   },
-  name: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#214559',
-    flex: 1,
-  },
-  difficulty: {
-    fontSize: 14,
-  },
-  ru: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3c95bb',
-    marginBottom: 2,
-  },
-  topic: {
-    fontSize: 12,
-    color: '#3c95bb',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  desc: {
-    fontSize: 14,
-    color: '#2c789d',
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  progressBar: {
-    height: 6,
-    backgroundColor: '#22c55e',
-    borderRadius: 3,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#214559',
-    fontWeight: '600',
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  practiceBtn: {
-    backgroundColor: '#3c95bb',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    flex: 1,
-    alignItems: 'center',
-  },
-  practiceBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  favBtn: {
-    backgroundColor: '#f3f8fc',
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+  lockBadge: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    zIndex: 10,
+    backgroundColor: '#162d3b',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  favBtnText: {
-    fontSize: 22,
-    color: '#3c95bb',
+  lockIcon: {
+    fontSize: 16,
+  },
+  checkBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    zIndex: 10,
+    backgroundColor: '#22c55e',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#22c55e',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  checkIcon: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  illustration: {
+    backgroundColor: '#e6f1f8',
+    borderRadius: 18,
+    height: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  handIcon: {
+    fontSize: 44,
+  },
+  name: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#214559',
+    marginBottom: 4,
+  },
+  categoryTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#cce4f0',
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  categoryText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2c789d',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  progressTrack: {
+    height: 5,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
   },
 });
