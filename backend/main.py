@@ -289,10 +289,45 @@ async def chat_lecture(payload: dict):
         return {"response": "❌ Ошибка ИИ при ответе."}
 
 
-@app.post("/api/translate-subtitle")
-def translate_subtitle(payload: dict):
+@app.post("/api/format-text")
+async def format_text(payload: dict):
     text = payload.get("text", "")
-    return {"text": text}
+    if not text.strip() or not client:
+        return {"text": text}
+    try:
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="grok-beta",
+                messages=[
+                    {"role": "system", "content": "Fix capitalization and punctuation only. Output ONLY the corrected text, no explanations."},
+                    {"role": "user", "content": text}
+                ]
+            ), timeout=10
+        )
+        return {"text": resp.choices[0].message.content.strip()}
+    except:
+        return {"text": text}
+
+
+@app.post("/api/translate-subtitle")
+async def translate_subtitle(payload: dict):
+    text = payload.get("text", "")
+    target = payload.get("target_lang", "en")
+    if not text.strip() or not client:
+        return {"text": text}
+    try:
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="grok-beta",
+                messages=[
+                    {"role": "system", "content": f"Translate to {target}. Output ONLY the translation, no explanations."},
+                    {"role": "user", "content": text}
+                ]
+            ), timeout=10
+        )
+        return {"text": resp.choices[0].message.content.strip()}
+    except:
+        return {"text": text}
 
 
 # --- Whisper STT ---

@@ -4,7 +4,8 @@ import {
   BookOpen, Mic, AlertTriangle, Phone,
   Square, User as UserIcon, LogOut, FileText, Loader2,
   Wifi, Globe, ChevronRight, Info, GraduationCap,
-  Zap, Camera, CheckCircle, Play, X, ThumbsUp
+  Zap, Camera, CheckCircle, Play, X, ThumbsUp,
+  Copy, Search, Download, Pencil, Languages
 } from 'lucide-react';
 
 
@@ -239,6 +240,13 @@ function App() {
   const [selectedSession, setSelectedSession] = useState(null);
   const [sessionEntries, setSessionEntries] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [translateLang, setTranslateLang] = useState('en');
+  const [translations, setTranslations] = useState({});
+  const [editingSubtitleId, setEditingSubtitleId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [searchHistoryQuery, setSearchHistoryQuery] = useState('');
+  const [autoSummarize, setAutoSummarize] = useState(true);
+  const [sessionSummary, setSessionSummary] = useState('');
 
   // === Alerts ===
   const [alerts, setAlerts] = useState([]);
@@ -464,6 +472,8 @@ function App() {
   // ——————————————————————————————————————————————
   const srLangRef = useRef(srLang);
   useEffect(() => { srLangRef.current = srLang; }, [srLang]);
+  const translateLangRef = useRef(translateLang);
+  useEffect(() => { translateLangRef.current = translateLang; }, [translateLang]);
   const dashRecogRef = useRef(null);
   const mediaRecorderRef = useRef(null);
 
@@ -481,8 +491,17 @@ function App() {
         body: JSON.stringify({ username: currentUser, session_id: sid, entries })
       }).catch(() => {});
       pendingSubtitlesRef.current = [];
+      // auto-summarize
+      if (autoSummarize) {
+        fetch(`${API}/api/summarize`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: entries.join(' ') })
+        }).then(r => r.json()).then(d => {
+          if (d.summary) setSessionSummary(d.summary);
+        }).catch(() => {});
+      }
     }
-  }, [currentUser]);
+  }, [currentUser, autoSummarize]);
 
   const startDashSTT = useCallback(() => {
     stopDashSTT();
@@ -508,6 +527,8 @@ function App() {
           const text = result[0].transcript.trim();
           if (!text) continue;
           const now = Date.now();
+          const id = now;
+          const timestamp = new Date().toLocaleTimeString();
           setSubtitles(prev => {
             const last = prev[prev.length - 1];
             if (last && !last.isSystem && (now - last.id < 6000)) {
@@ -515,10 +536,28 @@ function App() {
               updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
               return updated;
             }
-            return [...prev, { id: now, text, timestamp: new Date().toLocaleTimeString(), isFinal: true }].slice(-30);
+            return [...prev, { id, text, timestamp, isFinal: true }].slice(-30);
           });
           pendingSubtitlesRef.current.push(text);
           checkDanger(text);
+          // format in background
+          fetch(`${API}/api/format-text`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+          }).then(r => r.json()).then(d => {
+            if (d.text && d.text !== text) {
+              setSubtitles(prev => prev.map(e => e.id === id ? { ...e, text: d.text } : e));
+            }
+          }).catch(() => {});
+          // translate in background if language selected
+          if (translateLangRef.current) {
+            fetch(`${API}/api/translate-subtitle`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, target_lang: translateLang })
+            }).then(r => r.json()).then(d => {
+              if (d.text) setTranslations(prev => ({ ...prev, [id]: d.text }));
+            }).catch(() => {});
+          }
         } else {
           interim += result[0].transcript;
         }
@@ -652,6 +691,47 @@ function App() {
     setShowHistory(false);
     setSelectedSession(null);
     setSessionEntries([]);
+  };
+
+  const handleEditSubtitle = (entry) => {
+    setEditingSubtitleId(entry.id);
+    setEditText(entry.text);
+  };
+
+  const handleSaveEdit = (id) => {
+    setSubtitles(prev => prev.map(e => e.id === id ? { ...e, text: editText } : e));
+    setEditingSubtitleId(null);
+    setEditText('');
+  };
+
+  const handleCopyText = (text) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+  };
+
+  const handleCopySession = () => {
+    const allText = subtitles.filter(e => !e.isSystem).map(e => e.text).join('\n');
+    if (allText) navigator.clipboard.writeText(allText).catch(() => {});
+  };
+
+  const handleExportTxt = (entries, filename = 'subtitles') => {
+    const text = entries.map(e => e.text).join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${filename}.txt`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveToLecture = async (entries) => {
+    if (!currentUser) return;
+    const text = entries.map(e => e.text).join(' ');
+    if (!text.trim()) return;
+    try {
+      await fetch(`${API}/api/lectures`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `Субтитры ${new Date().toLocaleString()}`, notes: text, summary: '' })
+      });
+    } catch {}
   };
 
   // Danger detection — calls backend (AI) in background
@@ -1091,18 +1171,34 @@ function App() {
             <div className="hlp-main-grid" style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr', gap: '2rem' }}>
               {/* Subtitles panel */}
               <div className="hlp-feat-card" style={{ background: '#ffffff', borderRadius: '28px', border: '1px solid #e2e8f0', padding: '2.5rem', boxShadow: '0 10px 40px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', height: '650px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', paddingBottom: '1rem', borderBottom: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', paddingBottom: '1rem', borderBottom: '1px solid #f1f5f9', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <div style={{ padding: '0.5rem', background: '#eff6ff', borderRadius: '10px', color: '#3b82f6' }}><MessageSquare size={20} /></div>
                     <span style={{ fontWeight: 800, color: '#0f172a', fontSize: '1.1rem' }}>Поток речи</span>
                   </div>
-                  {isListening ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ecfdf5', color: '#059669', padding: '0.5rem 1rem', borderRadius: '50px', fontSize: '0.85rem', fontWeight: 700 }}>
-                      <span style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%', animation: 'pulse 1.5s infinite' }}></span> Микрофон ВКЛ
-                    </div>
-                  ) : (
-                    <div style={{ background: '#f1f5f9', color: '#64748b', padding: '0.5rem 1rem', borderRadius: '50px', fontSize: '0.85rem', fontWeight: 700 }}>Ожидание</div>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <select
+                      value={translateLang}
+                      onChange={e => setTranslateLang(e.target.value)}
+                      style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#0f172a', padding: '0.35rem 0.5rem', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, outline: 'none', cursor: 'pointer' }}
+                      title="Перевод"
+                    >
+                      <option value="">Нет</option>
+                      <option value="en">English</option>
+                      <option value="ru">Русский</option>
+                      <option value="kk">Қазақша</option>
+                    </select>
+                    <button onClick={handleCopySession} title="Копировать всё" style={{ background: '#f1f5f9', border: 'none', color: '#64748b', padding: '0.35rem 0.65rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Copy size={12} /> Копировать
+                    </button>
+                    {isListening ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ecfdf5', color: '#059669', padding: '0.5rem 1rem', borderRadius: '50px', fontSize: '0.85rem', fontWeight: 700 }}>
+                        <span style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%', animation: 'pulse 1.5s infinite' }}></span> ВКЛ
+                      </div>
+                    ) : (
+                      <div style={{ background: '#f1f5f9', color: '#64748b', padding: '0.5rem 1rem', borderRadius: '50px', fontSize: '0.85rem', fontWeight: 700 }}>Ожидание</div>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ ...s.subScroll, flex: 1, maxHeight: 'none', paddingRight: '1rem' }}>
@@ -1119,9 +1215,36 @@ function App() {
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                         <span style={{ color: '#3b82f6', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{entry.isSystem ? 'Система' : 'Голос'}</span>
-                        <small style={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 600 }}>{entry.timestamp}</small>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <small style={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 600 }}>{entry.timestamp}</small>
+                          {!entry.isSystem && (
+                            <button onClick={() => handleCopyText(entry.text)} title="Копировать" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px' }}>
+                              <Copy size={12} />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <p style={{ margin: 0, fontSize: '1.1rem', lineHeight: 1.6, color: '#0f172a', fontWeight: 500 }}>{entry.text}</p>
+                      {editingSubtitleId === entry.id ? (
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                          <input
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(entry.id); if (e.key === 'Escape') setEditingSubtitleId(null); }}
+                            style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: '10px', border: '1px solid #3b82f6', fontSize: '1.1rem', outline: 'none', fontFamily: 'inherit', background: '#fff', color: '#0f172a' }}
+                            autoFocus
+                          />
+                          <button onClick={() => handleSaveEdit(entry.id)} style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '0.5rem 1rem', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>OK</button>
+                        </div>
+                      ) : (
+                        <p onClick={() => !entry.isSystem && handleEditSubtitle(entry)} style={{ margin: 0, fontSize: '1.1rem', lineHeight: 1.6, color: '#0f172a', fontWeight: 500, cursor: entry.isSystem ? 'default' : 'pointer' }}>
+                          {entry.text}
+                        </p>
+                      )}
+                      {translations[entry.id] && (
+                        <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem', color: '#64748b', fontStyle: 'italic', borderTop: '1px solid #e2e8f0', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
+                          {translations[entry.id]}
+                        </p>
+                      )}
                     </div>
                   ))}
 
@@ -1136,6 +1259,16 @@ function App() {
                   )}
                   <div ref={subtitlesEndRef} />
                 </div>
+                {sessionSummary && (
+                  <div style={{ marginTop: '1rem', padding: '1rem 1.25rem', background: '#f0fdf4', borderRadius: '14px', border: '1px solid #bbf7d0', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <CheckCircle size={18} color="#22c55e" style={{ marginTop: '2px', flexShrink: 0 }} />
+                    <div>
+                      <strong style={{ color: '#166534', fontSize: '0.85rem', fontWeight: 700, display: 'block', marginBottom: '0.25rem' }}>Саммари сессии</strong>
+                      <p style={{ margin: 0, color: '#15803d', fontSize: '0.9rem', lineHeight: 1.5 }}>{sessionSummary}</p>
+                    </div>
+                    <button onClick={() => setSessionSummary('')} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', flexShrink: 0, padding: '2px' }}><X size={14} /></button>
+                  </div>
+                )}
               </div>
 
               {/* Alerts panel */}
@@ -1193,18 +1326,35 @@ function App() {
 
                 {selectedSession ? (
                   <div>
-                    <button onClick={() => { setSelectedSession(null); setSessionEntries([]); }}
-                      style={{ background: 'none', border: 'none', color: '#3b82f6', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                      <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} /> Назад к сессиям
-                    </button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <button onClick={() => { setSelectedSession(null); setSessionEntries([]); }}
+                        style={{ background: 'none', border: 'none', color: '#3b82f6', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} /> Назад
+                      </button>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button onClick={() => handleExportTxt(sessionEntries, `subtitles-${selectedSession}`)} title="Экспорт .txt"
+                          style={{ background: '#f1f5f9', border: 'none', color: '#64748b', padding: '0.4rem 0.75rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <Download size={12} /> .txt
+                        </button>
+                        <button onClick={() => handleSaveToLecture(sessionEntries)} title="Сохранить как лекцию"
+                          style={{ background: '#eff6ff', border: 'none', color: '#3b82f6', padding: '0.4rem 0.75rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <BookOpen size={12} /> В лекции
+                        </button>
+                      </div>
+                    </div>
                     {isLoadingHistory ? (
                       <p style={{ color: '#94a3b8', textAlign: 'center' }}>Загрузка...</p>
                     ) : (
                       <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                         {sessionEntries.map((e, i) => (
-                          <div key={i} style={{ padding: '1rem 1.25rem', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                            <p style={{ margin: 0, fontSize: '1rem', color: '#0f172a' }}>{e.text}</p>
-                            <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{e.timestamp}</small>
+                          <div key={i} style={{ padding: '1rem 1.25rem', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: '1rem', color: '#0f172a' }}>{e.text}</p>
+                              <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{e.timestamp}</small>
+                            </div>
+                            <button onClick={() => handleCopyText(e.text)} title="Копировать" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px', flexShrink: 0 }}>
+                              <Copy size={12} />
+                            </button>
                           </div>
                         ))}
                         {sessionEntries.length === 0 && <p style={{ color: '#94a3b8', textAlign: 'center' }}>Нет записей</p>}
@@ -1212,28 +1362,39 @@ function App() {
                     )}
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '400px', overflowY: 'auto' }}>
-                    {isLoadingHistory ? (
-                      <p style={{ color: '#94a3b8', textAlign: 'center' }}>Загрузка...</p>
-                    ) : historySessions.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
-                        <MessageSquare size={40} style={{ opacity: 0.3, marginBottom: '1rem' }} />
-                        <p>История пуста</p>
-                      </div>
-                    ) : (
-                      historySessions.map(s => (
-                        <div key={s.session_id} onClick={() => loadSession(s.session_id)}
-                          style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '16px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <p style={{ margin: 0, fontWeight: 600, color: '#0f172a', flex: 1 }}>{s.first_text}</p>
-                            <span style={{ background: '#eff6ff', color: '#3b82f6', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                              {s.count} зап.
-                            </span>
-                          </div>
-                          <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{s.timestamp}</small>
+                  <div>
+                    <div style={{ position: 'relative', marginBottom: '1rem' }}>
+                      <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                      <input
+                        value={searchHistoryQuery}
+                        onChange={e => setSearchHistoryQuery(e.target.value)}
+                        placeholder="Поиск в истории..."
+                        style={{ width: '100%', padding: '0.6rem 0.6rem 0.6rem 2.25rem', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.85rem', outline: 'none', fontFamily: 'inherit', background: '#f8fafc', color: '#0f172a', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '360px', overflowY: 'auto' }}>
+                      {isLoadingHistory ? (
+                        <p style={{ color: '#94a3b8', textAlign: 'center' }}>Загрузка...</p>
+                      ) : historySessions.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+                          <MessageSquare size={40} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                          <p>История пуста</p>
                         </div>
-                      ))
-                    )}
+                      ) : (
+                        historySessions.filter(s => !searchHistoryQuery || (s.first_text || '').toLowerCase().includes(searchHistoryQuery.toLowerCase())).map(s => (
+                          <div key={s.session_id} onClick={() => loadSession(s.session_id)}
+                            style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '16px', border: '1px solid #e2e8f0', cursor: 'pointer', transition: 'all 0.2s' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <p style={{ margin: 0, fontWeight: 600, color: '#0f172a', flex: 1 }}>{s.first_text}</p>
+                              <span style={{ background: '#eff6ff', color: '#3b82f6', padding: '0.25rem 0.75rem', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                {s.count} зап.
+                              </span>
+                            </div>
+                            <small style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{s.timestamp}</small>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
