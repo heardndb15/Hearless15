@@ -4,12 +4,14 @@
  * Управляет:
  *   - состоянием камеры (готова/нет)
  *   - захватом фреймов
- *   - конвертацией в base64 JPEG
+ *   - конвертацией в base64 JPEG через expo-file-system
+ *     (вместо FileReader — его нет в React Native)
  *   - переключением фронтальная/тыловая
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
 
 const FRAME_QUALITY = 0.6;   // качество JPEG (0-1)
 const FRAME_WIDTH = 480;     // ширина фрейма
@@ -28,6 +30,18 @@ export default function useCamera() {
       const { status } = await Camera.requestCameraPermissionsAsync();
       setHasPermission(status === 'granted');
     })();
+  }, []);
+
+  // ── Конвертация URI в base64 через expo-file-system ────────────
+  const uriToBase64 = useCallback(async (uri) => {
+    try {
+      return await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch (err) {
+      console.warn('[useCamera] uriToBase64 error:', err);
+      return null;
+    }
   }, []);
 
   // ── Остановка захвата ──────────────────────────────────────────
@@ -53,21 +67,14 @@ export default function useCamera() {
           skipProcessing: true,
         });
         if (photo?.uri && onFrameRef.current) {
-          // Конвертируем в base64
-          const response = await fetch(photo.uri);
-          const blob = await response.blob();
-          const base64 = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-            reader.readAsDataURL(blob);
-          });
-          onFrameRef.current(base64);
+          const base64 = await uriToBase64(photo.uri);
+          if (base64) onFrameRef.current(base64);
         }
       } catch (err) {
         // Тихий сброс — камера может быть занята
       }
     }, intervalMs);
-  }, [stopCapture]);
+  }, [stopCapture, uriToBase64]);
 
   // ── Переключение камеры ────────────────────────────────────────
   const toggleCamera = useCallback(() => {

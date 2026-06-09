@@ -11,7 +11,7 @@
  *   - Анимация успеха при confidence > 85%
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -31,7 +31,7 @@ const API_URL = __DEV__
 const SUCCESS_THRESHOLD = 0.85;
 
 export default function GesturePractice({ gesture, onBack, username }) {
-  const [hasPermission, setHasPermission] = useState(null);
+  const [permission, requestPermission] = Camera.useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
   const cameraRef = useRef(null);
   const flashAnim = useRef(new Animated.Value(0)).current;
@@ -46,13 +46,11 @@ export default function GesturePractice({ gesture, onBack, username }) {
     stopRecognition,
   } = useGestureRecognition(API_URL, gesture?.name, username);
 
-  // ── Запрос разрешения на камеру ────────────────────────────────
+  // ── Запрос разрешения на камеру (хук useCameraPermissions из expo-camera) ─
+  const hasPermission = permission?.granted ?? null;
   useEffect(() => {
-    (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasPermission(status === 'granted');
-    })();
-  }, []);
+    if (permission?.granted === false) requestPermission();
+  }, [permission]);
 
   // ── Запуск/остановка распознавания ─────────────────────────────
   useEffect(() => {

@@ -1,6 +1,9 @@
 /**
  * useProgress.js — сохранение и загрузка прогресса пользователя
- * по жестам из Supabase через бэкенд.
+ * по жестам из Supabase через бэкенд + AsyncStorage для локальных данных.
+ *
+ * ВНИМАНИЕ: для локального хранения использует
+ * `@react-native-async-storage/async-storage` (не localStorage — его нет в RN).
  *
  * Возвращает:
  *   progress      — { [gesture_id]: { learned, attempts, best_confidence } }
@@ -14,28 +17,30 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = __DEV__
   ? 'http://192.168.1.100:8000'
   : 'https://hearless15.onrender.com';
 
-// ── Ключи для localStorage (стрик, очки, ежедневная цель) ──────────
+// ── Ключи для AsyncStorage ───────────────────────────────────────────
 const STREAK_KEY = 'hearless_streak';
 const POINTS_KEY = 'hearless_points';
 const GOAL_KEY = 'hearless_daily_goal';
 const FAVORITES_KEY = 'hearless_favorites';
 
-function getLocal(key, def) {
+async function getLocal(key, def) {
   try {
-    return JSON.parse(localStorage.getItem(key)) ?? def;
+    const val = await AsyncStorage.getItem(key);
+    return val !== null ? JSON.parse(val) : def;
   } catch {
     return def;
   }
 }
 
-function setLocal(key, val) {
+async function setLocal(key, val) {
   try {
-    localStorage.setItem(key, JSON.stringify(val));
+    await AsyncStorage.setItem(key, JSON.stringify(val));
   } catch {}
 }
 
@@ -47,7 +52,7 @@ export default function useProgress(username) {
   const [dailyGoal, setDailyGoal] = useState({ done: 0, target: 5 });
   const [favorites, setFavorites] = useState([]);
 
-  // ── Загрузка прогресса из Supabase ────────────────────────────
+  // ── Загрузка прогресса из Supabase + AsyncStorage ──────────────
   const refresh = useCallback(async () => {
     if (!username) return;
     try {
@@ -55,7 +60,6 @@ export default function useProgress(username) {
       const data = await res.json();
       setStats(data);
 
-      // Загружаем детальный прогресс
       const res2 = await fetch(`${API_URL}/api/signs/progress/${username}`);
       const data2 = await res2.json();
       if (data2.progress) {
@@ -67,11 +71,11 @@ export default function useProgress(username) {
       console.warn('[useProgress] fetch error:', err);
     }
 
-    // Локальные данные (стрик, очки, цель)
-    setStreak(getLocal(STREAK_KEY, 0));
-    setPoints(getLocal(POINTS_KEY, 0));
-    setDailyGoal(getLocal(GOAL_KEY, { done: 0, target: 5, date: null }));
-    setFavorites(getLocal(FAVORITES_KEY, []));
+    // Локальные данные из AsyncStorage
+    setStreak(await getLocal(STREAK_KEY, 0));
+    setPoints(await getLocal(POINTS_KEY, 0));
+    setDailyGoal(await getLocal(GOAL_KEY, { done: 0, target: 5, date: null }));
+    setFavorites(await getLocal(FAVORITES_KEY, []));
   }, [username]);
 
   // ── Загрузка при монтировании и смене пользователя ────────────
@@ -79,14 +83,14 @@ export default function useProgress(username) {
     refresh();
   }, [refresh]);
 
-  // ── Обновление ежедневной цели ─────────────────────────────────
-  const updateDailyGoal = useCallback(() => {
-    const goal = getLocal(GOAL_KEY, { done: 0, target: 5, date: null });
+  // ── Обновление ежедневной цели (сброс если новый день) ────────
+  const updateDailyGoal = useCallback(async () => {
+    const goal = await getLocal(GOAL_KEY, { done: 0, target: 5, date: null });
     const today = new Date().toDateString();
     if (goal.date !== today) {
       goal.done = 0;
       goal.date = today;
-      setLocal(GOAL_KEY, goal);
+      await setLocal(GOAL_KEY, goal);
     }
     setDailyGoal(goal);
     return goal;
@@ -96,7 +100,6 @@ export default function useProgress(username) {
   const markLearned = useCallback(async (gestureId, confidence = 1.0) => {
     if (!username) return;
 
-    // Отправляем на бэкенд
     try {
       const res = await fetch(`${API_URL}/api/gestures/progress`, {
         method: 'POST',
@@ -109,56 +112,48 @@ export default function useProgress(username) {
         }),
       });
       const data = await res.json();
-      if (data.success) {
-        refresh();
-      }
+      if (data.success) refresh();
     } catch {}
 
-    // Обновляем локальные данные
     if (confidence > 0.85) {
-      // Стрик
-      const s = getLocal(STREAK_KEY, 0);
+      const s = await getLocal(STREAK_KEY, 0);
       const newStreak = s + 1;
-      setLocal(STREAK_KEY, newStreak);
+      await setLocal(STREAK_KEY, newStreak);
       setStreak(newStreak);
-      updateDailyGoal();
 
-      // Очки
-      const p = getLocal(POINTS_KEY, 0);
+      const p = await getLocal(POINTS_KEY, 0);
       const newPoints = p + 10;
-      setLocal(POINTS_KEY, newPoints);
+      await setLocal(POINTS_KEY, newPoints);
       setPoints(newPoints);
 
-      // Ежедневная цель
-      const goal = getLocal(GOAL_KEY, { done: 0, target: 5, date: null });
+      const goal = await getLocal(GOAL_KEY, { done: 0, target: 5, date: null });
       const today = new Date().toDateString();
       if (goal.date !== today) {
         goal.date = today;
         goal.done = 0;
       }
       goal.done += 1;
-      setLocal(GOAL_KEY, goal);
+      await setLocal(GOAL_KEY, goal);
       setDailyGoal(goal);
     }
-  }, [username, refresh, updateDailyGoal]);
+  }, [username, refresh]);
 
   // ── Добавить очки ─────────────────────────────────────────────
-  const addPoints = useCallback((amount) => {
-    const p = getLocal(POINTS_KEY, 0);
+  const addPoints = useCallback(async (amount) => {
+    const p = await getLocal(POINTS_KEY, 0);
     const newPoints = p + amount;
-    setLocal(POINTS_KEY, newPoints);
+    await setLocal(POINTS_KEY, newPoints);
     setPoints(newPoints);
   }, []);
 
   // ── Избранное ─────────────────────────────────────────────────
-  const toggleFavorite = useCallback((gestureId) => {
-    setFavorites(prev => {
-      const next = prev.includes(gestureId)
-        ? prev.filter(id => id !== gestureId)
-        : [...prev, gestureId];
-      setLocal(FAVORITES_KEY, next);
-      return next;
-    });
+  const toggleFavorite = useCallback(async (gestureId) => {
+    const prev = await getLocal(FAVORITES_KEY, []);
+    const next = prev.includes(gestureId)
+      ? prev.filter(id => id !== gestureId)
+      : [...prev, gestureId];
+    await setLocal(FAVORITES_KEY, next);
+    setFavorites(next);
   }, []);
 
   return {
