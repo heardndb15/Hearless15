@@ -1802,8 +1802,8 @@ function App() {
                 {/* ===== СЕТКА ЖЕСТОВ ===== */}
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: '12px',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                  gap: '2rem',
                   padding: '4px 0',
                 }}>
                   {SIGN_DATA
