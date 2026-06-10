@@ -612,19 +612,16 @@ function App() {
           const now = Date.now();
           const id = now;
           const timestamp = new Date().toLocaleTimeString();
+          const fixed = fixText(text);
           setSubtitles(prev => {
             const last = prev[prev.length - 1];
             if (last && !last.isSystem && (now - last.id < 6000)) {
               const updated = [...prev];
-              updated[updated.length - 1] = { ...last, text: last.text + ' ' + text, id: now };
+              updated[updated.length - 1] = { ...last, text: last.text + ' ' + fixed, id: now };
               return updated;
             }
-            return [...prev, { id, text, timestamp, isFinal: true }].slice(-30);
+            return [...prev, { id, text: fixed, timestamp, isFinal: true }].slice(-30);
           });
-          const fixed = fixText(text);
-          if (fixed !== text) {
-            setSubtitles(prev => prev.map(e => e.id === id ? { ...e, text: fixed } : e));
-          }
           pendingSubtitlesRef.current.push(fixed);
           checkDanger(fixed);
           // translate in background if language selected
