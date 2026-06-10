@@ -7,3 +7,7 @@ python-multipart
 PyPDF2
 supabase
 httpx
+numpy
+Pillow
+torch
+torchvision

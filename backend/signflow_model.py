@@ -30,7 +30,7 @@ except ImportError:
     torch = None
 
 # ── Устройство ────────────────────────────────────────────────────────
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cpu") if TORCH_AVAILABLE else None
 
 # ── Конфигурация инференса ────────────────────────────────────────────
 IMG_SIZE = 224          # размер входного фрейма (MobileNet)
@@ -39,46 +39,57 @@ FRAME_STEP = 3          # обрабатывать каждый 3-й фрейм
 
 
 # ── Минимальная реализация SignFlow ───────────────────────────────────
-class SignFlowModel(nn.Module):
-    """
-    Упрощённая модель на базе MobileNetV3.
-    В продакшене загружается веса с Hugging Face:
-      https://huggingface.co/sberbank-ai/SignFlow
+if TORCH_AVAILABLE:
 
-    Если веса не найдены — работает в эмуляционном режиме
-    (возвращает случайный жест для демонстрации).
-    """
+    class SignFlowModel(nn.Module):
+        """
+        Упрощённая модель на базе MobileNetV3.
+        В продакшене загружается веса с Hugging Face:
+          https://huggingface.co/sberbank-ai/SignFlow
 
-    def __init__(self, num_classes: int = 1000):
-        super().__init__()
-        if TORCH_AVAILABLE:
-            from torchvision.models import mobilenet_v3_small
-            self.backbone = mobilenet_v3_small(weights=None, num_classes=num_classes)
-        else:
+        Если веса не найдены — работает в эмуляционном режиме
+        (возвращает случайный жест для демонстрации).
+        """
+
+        def __init__(self, num_classes: int = 1000):
+            super().__init__()
+            if TORCH_AVAILABLE:
+                from torchvision.models import mobilenet_v3_small
+                self.backbone = mobilenet_v3_small(weights=None, num_classes=num_classes)
+            else:
+                self.backbone = None
+            self.num_classes = num_classes
+
+        def forward(self, x):
+            if self.backbone is not None:
+                return self.backbone(x)
+            B = x.size(0)
+            return torch.randn(B, self.num_classes) * 0.1
+
+    # ── Трансформация фрейма ──────────────────────────────────────────
+    _transform = None
+
+    def _get_transform():
+        global _transform
+        if _transform is None:
+            _transform = T.Compose([
+                T.Resize((IMG_SIZE, IMG_SIZE)),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+        return _transform
+
+else:
+    # Dummy classes when PyTorch is not available
+    class SignFlowModel:
+        def __init__(self, num_classes: int = 1000):
+            self.num_classes = num_classes
             self.backbone = None
-        self.num_classes = num_classes
+        def eval(self):
+            pass
 
-    def forward(self, x):
-        if self.backbone is not None:
-            return self.backbone(x)
-        # Эмуляция: возвращаем случайный логарифм
-        B = x.size(0)
-        return torch.randn(B, self.num_classes) * 0.1
-
-
-# ── Трансформация фрейма ──────────────────────────────────────────────
-_transform = None
-
-
-def _get_transform():
-    global _transform
-    if _transform is None:
-        _transform = T.Compose([
-            T.Resize((IMG_SIZE, IMG_SIZE)),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-    return _transform
+    def _get_transform():
+        return None
 
 
 # ── Глобальная модель (синглтон) ──────────────────────────────────────
@@ -144,101 +155,75 @@ def set_labels(labels: list):
     _labels = labels
 
 
-def preprocess_frame(frame_b64: str) -> Optional[torch.Tensor]:
-    """
-    Декодирует base64 → PIL → тензор [1, 3, 224, 224].
-    Возвращает None при ошибке.
-    """
-    try:
-        img_bytes = base64.b64decode(frame_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        tensor = _get_transform()(img).unsqueeze(0)
-        return tensor
-    except Exception as e:
-        logger.warning(f"Ошибка обработки фрейма: {e}")
+if TORCH_AVAILABLE:
+
+    def preprocess_frame(frame_b64: str) -> Optional[torch.Tensor]:
+        try:
+            img_bytes = base64.b64decode(frame_b64)
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            tensor = _get_transform()(img).unsqueeze(0)
+            return tensor
+        except Exception as e:
+            logger.warning(f"Ошибка обработки фрейма: {e}")
+            return None
+
+    @torch.no_grad()
+    def recognize(frame_b64: str, top_k: int = 3) -> dict:
+        t0 = time.perf_counter()
+        model = load_model()
+        tensor = preprocess_frame(frame_b64)
+        if tensor is None:
+            return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
+        logits = model(tensor)
+        probs = F.softmax(logits, dim=1)
+        top_probs, top_indices = torch.topk(probs, top_k, dim=1)
+        top_results = []
+        for i in range(top_k):
+            idx = int(top_indices[0, i].item())
+            label = _labels[idx] if idx < len(_labels) else f"gesture_{idx}"
+            top_results.append({
+                "id": idx,
+                "gesture": label,
+                "confidence": round(float(top_probs[0, i].item()), 4),
+            })
+        best = top_results[0]
+        elapsed = round((time.perf_counter() - t0) * 1000, 1)
+        return {"gesture": best["gesture"], "confidence": best["confidence"], "top_k": top_results, "time_ms": elapsed}
+
+    def recognize_batch(frames_b64: list) -> dict:
+        if not frames_b64:
+            return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
+        model = load_model()
+        tensors = []
+        for f in frames_b64:
+            t = preprocess_frame(f)
+            if t is not None:
+                tensors.append(t)
+        if not tensors:
+            return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
+        batch = torch.cat(tensors, dim=0)
+        t0 = time.perf_counter()
+        logits = model(batch)
+        probs = F.softmax(logits, dim=1).mean(dim=0, keepdim=True)
+        top_probs, top_indices = torch.topk(probs, 3, dim=1)
+        top_results = []
+        for i in range(3):
+            idx = int(top_indices[0, i].item())
+            label = _labels[idx] if idx < len(_labels) else f"gesture_{idx}"
+            top_results.append({
+                "id": idx,
+                "gesture": label,
+                "confidence": round(float(top_probs[0, i].item()), 4),
+            })
+        best = top_results[0]
+        elapsed = round((time.perf_counter() - t0) * 1000, 1)
+        return {"gesture": best["gesture"], "confidence": best["confidence"], "top_k": top_results, "time_ms": elapsed}
+else:
+    def preprocess_frame(frame_b64: str):
         return None
 
-
-@torch.no_grad()
-def recognize(frame_b64: str, top_k: int = 3) -> dict:
-    """
-    Распознаёт жест по одному фрейму.
-
-    Возвращает:
-      {"gesture": str, "confidence": float, "top_k": [...], "time_ms": float}
-    """
-    t0 = time.perf_counter()
-
-    model = load_model()
-    tensor = preprocess_frame(frame_b64)
-    if tensor is None:
+    def recognize(frame_b64: str, top_k: int = 3) -> dict:
         return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
 
-    # Инференс
-    logits = model(tensor)
-    probs = F.softmax(logits, dim=1)
-    top_probs, top_indices = torch.topk(probs, top_k, dim=1)
-
-    top_results = []
-    for i in range(top_k):
-        idx = int(top_indices[0, i].item())
-        label = _labels[idx] if idx < len(_labels) else f"gesture_{idx}"
-        top_results.append({
-            "id": idx,
-            "gesture": label,
-            "confidence": round(float(top_probs[0, i].item()), 4),
-        })
-
-    best = top_results[0]
-    elapsed = round((time.perf_counter() - t0) * 1000, 1)
-
-    return {
-        "gesture": best["gesture"],
-        "confidence": best["confidence"],
-        "top_k": top_results,
-        "time_ms": elapsed,
-    }
-
-
-def recognize_batch(frames_b64: list) -> dict:
-    """
-    Принимает список фреймов, усредняет предсказания.
-    Используется для агрегации по нескольким фреймам.
-    """
-    if not frames_b64:
+    def recognize_batch(frames_b64: list) -> dict:
         return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
-
-    model = load_model()
-    tensors = []
-    for f in frames_b64:
-        t = preprocess_frame(f)
-        if t is not None:
-            tensors.append(t)
-    if not tensors:
-        return {"gesture": "", "confidence": 0.0, "top_k": [], "time_ms": 0}
-
-    batch = torch.cat(tensors, dim=0)
-    t0 = time.perf_counter()
-    logits = model(batch)
-    probs = F.softmax(logits, dim=1).mean(dim=0, keepdim=True)
-    top_probs, top_indices = torch.topk(probs, 3, dim=1)
-
-    top_results = []
-    for i in range(3):
-        idx = int(top_indices[0, i].item())
-        label = _labels[idx] if idx < len(_labels) else f"gesture_{idx}"
-        top_results.append({
-            "id": idx,
-            "gesture": label,
-            "confidence": round(float(top_probs[0, i].item()), 4),
-        })
-
-    best = top_results[0]
-    elapsed = round((time.perf_counter() - t0) * 1000, 1)
-
-    return {
-        "gesture": best["gesture"],
-        "confidence": best["confidence"],
-        "top_k": top_results,
-        "time_ms": elapsed,
-    }
