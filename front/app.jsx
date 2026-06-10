@@ -225,12 +225,6 @@ const speakText = async (text, lang = 'kk') => {
     audio.play().catch(() => {});
   } catch {}
 };
-  text = text.trim();
-  if (!text) return text;
-  text = text.charAt(0).toUpperCase() + text.slice(1);
-  if (!/[.!?…]$/.test(text)) text += '.';
-  return text;
-}
 
 // ——————————————————————————————————————————————
 // App
