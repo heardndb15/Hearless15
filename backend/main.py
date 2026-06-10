@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import Response
 import logging
 import shutil
 import tempfile
@@ -29,6 +30,7 @@ app = FastAPI(title="Hearless Backend", version="3.0.0")
 client: Optional[AsyncOpenAI] = None
 whisper_client: Optional[AsyncOpenAI] = None
 supabase: Optional[Client] = None
+elevenlabs_key: str = ""
 
 alerts_store = []
 last_alert_time = {}
@@ -47,7 +49,7 @@ def hash_pw(pw: str):
 
 @app.on_event("startup")
 async def startup_event():
-    global client, whisper_client, supabase
+    global client, whisper_client, supabase, elevenlabs_key
 
     # ── xAI Grok ──
     xai_key = os.getenv("XAI_API_KEY", "").strip()
@@ -70,6 +72,13 @@ async def startup_event():
             logger.error(f"OpenAI init failed: {e}")
     else:
         logger.warning("OPENAI_API_KEY not set — Whisper STT disabled")
+
+    # ── Eleven Labs TTS ──
+    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if elevenlabs_key:
+        logger.info("Eleven Labs TTS ready (key length: %d)", len(elevenlabs_key))
+    else:
+        logger.warning("ELEVENLABS_API_KEY not set — TTS disabled")
 
     # ── Supabase ──
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
@@ -95,7 +104,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"SignFlow init failed: {e}")
 
-    logger.info(f"Hearless v3.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'} | Supabase={'yes' if supabase else 'no'}")
+    logger.info(f"Hearless v3.0 | xAI={'yes' if client else 'no'} | Whisper={'yes' if whisper_client else 'no'} | TTS={'yes' if elevenlabs_key else 'no'} | Supabase={'yes' if supabase else 'no'}")
 
 
 # ======================= DIAGNOSTICS =======================
@@ -265,6 +274,49 @@ def post_sos(payload: dict):
     except Exception as e:
         logger.error(f"SOS Save Error: {e}")
         return {"success": False, "error": str(e)}
+
+
+# --- TTS (Eleven Labs) ---
+
+ELEVENLABS_VOICES = {
+    "ru": "XrExE9yKIg1WjnnlVkGL",   # Nicholas — русский
+    "kk": "XrExE9yKIg1WjnnlVkGL",   # Nicholas — Kazakh (multilingual)
+    "en": "21m00Tcm4TlvDq8ikWAM",   # Rachel — English
+}
+TTS_MODEL = "eleven_multilingual_v2"
+
+@app.post("/api/tts")
+async def text_to_speech(payload: dict):
+    text = payload.get("text", "").strip()
+    language = payload.get("language", "kk")
+    if not text:
+        return Response(status_code=400)
+    if not elevenlabs_key:
+        return Response(status_code=503, content="TTS not configured")
+    voice_id = ELEVENLABS_VOICES.get(language, ELEVENLABS_VOICES["kk"])
+    import httpx
+    try:
+        async with httpx.AsyncClient() as hc:
+            resp = await hc.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": elevenlabs_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": text,
+                    "model_id": TTS_MODEL,
+                    "voice_settings": {"stability": 0.4, "similarity_boost": 0.7},
+                },
+                timeout=60,
+            )
+        if resp.status_code != 200:
+            logger.error("Eleven Labs TTS error: %s", resp.text)
+            return Response(status_code=502, content=f"TTS provider error: {resp.status_code}")
+        return Response(content=resp.content, media_type="audio/mpeg")
+    except Exception as e:
+        logger.error("TTS request failed: %s", e)
+        return Response(status_code=502, content=str(e))
 
 
 # --- Lecture AI Tools ---

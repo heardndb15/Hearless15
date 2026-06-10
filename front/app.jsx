@@ -5,7 +5,8 @@ import {
   Square, User as UserIcon, LogOut, FileText, Loader2,
   Wifi, Globe, ChevronRight, Info, GraduationCap,
   Zap, Camera, CheckCircle, Play, X, ThumbsUp,
-  Copy, Search, Download, Pencil, Languages
+  Copy, Search, Download, Pencil, Languages,
+  Volume2
 } from 'lucide-react';
 
 
@@ -200,6 +201,30 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
 // local text formatting (no AI)
 function fixText(text) {
+  text = text.trim();
+  if (!text) return text;
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  if (!/[.!?…]$/.test(text)) text += '.';
+  return text;
+}
+
+// TTS via Eleven Labs
+const speakText = async (text, lang = 'kk') => {
+  if (!text.trim()) return;
+  try {
+    const res = await fetch(`${API}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 1000), language: lang })
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play().catch(() => {});
+  } catch {}
+};
   text = text.trim();
   if (!text) return text;
   text = text.charAt(0).toUpperCase() + text.slice(1);
@@ -1277,9 +1302,14 @@ function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <small style={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 600 }}>{entry.timestamp}</small>
                           {!entry.isSystem && (
-                            <button onClick={() => handleCopyText(entry.text)} title="Копировать" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px' }}>
-                              <Copy size={12} />
-                            </button>
+                            <>
+                              <button onClick={() => speakText(entry.text, srLang)} title="Озвучить" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px' }}>
+                                <Volume2 size={12} />
+                              </button>
+                              <button onClick={() => handleCopyText(entry.text)} title="Копировать" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px' }}>
+                                <Copy size={12} />
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -1510,7 +1540,12 @@ function App() {
 
                   {pdfNotes && (
                     <div style={{ ...s.notesBox, marginTop: '2rem', border: '1px solid #e2e8f0', background: '#f8fafc', borderRadius: '16px' }}>
-                      <h4 style={{ color: '#0f172a', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', fontSize: '1.1rem' }}>📄 Извлеченные заметки</h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
+                        <h4 style={{ color: '#0f172a', fontSize: '1.1rem' }}>📄 Извлеченные заметки</h4>
+                        <button onClick={() => speakText(pdfNotes, 'ru')} title="Озвучить" style={{ background: '#0f172a', border: 'none', color: '#fff', padding: '0.4rem 0.75rem', borderRadius: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', fontWeight: 600 }}>
+                          <Volume2 size={13} /> Озвучить
+                        </button>
+                      </div>
                       <pre style={s.preText}>{pdfNotes}</pre>
                       {pdfSummary && (
                         <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#ffffff', borderRadius: '16px', borderLeft: '4px solid #3b82f6', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
@@ -1577,16 +1612,28 @@ function App() {
                     </div>
                   )}
 
-                  <textarea
-                    value={lectureNotes}
-                    onChange={e => setLectureNotes(e.target.value)}
-                    placeholder="Жду начала транскрипции..."
-                    style={{ width: '100%', minHeight: '160px', padding: '1.25rem', borderRadius: '16px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#0f172a', fontSize: '1.05rem', resize: 'vertical', fontFamily: 'inherit', outline: 'none' }}
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <textarea
+                      value={lectureNotes}
+                      onChange={e => setLectureNotes(e.target.value)}
+                      placeholder="Жду начала транскрипции..."
+                      style={{ width: '100%', minHeight: '160px', padding: '1.25rem', borderRadius: '16px', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#0f172a', fontSize: '1.05rem', resize: 'vertical', fontFamily: 'inherit', outline: 'none' }}
+                    />
+                    {lectureNotes.trim() && (
+                      <button onClick={() => speakText(lectureNotes, lectureLang)} title="Озвучить лекцию" style={{ position: 'absolute', bottom: '1rem', right: '1rem', background: '#0f172a', border: 'none', color: '#fff', padding: '0.5rem 0.75rem', borderRadius: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600 }}>
+                        <Volume2 size={14} /> Озвучить
+                      </button>
+                    )}
+                  </div>
 
                   {lectureSummary && (
                     <div style={{ marginTop: '1.5rem', padding: '1.5rem', background: '#ffffff', borderRadius: '16px', borderLeft: '4px solid #ef4444', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
-                      <h4 style={{ marginBottom: '0.75rem', fontSize: '1.05rem', color: '#0f172a' }}>✨ Краткий итог лекции</h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <h4 style={{ fontSize: '1.05rem', color: '#0f172a' }}>✨ Краткий итог лекции</h4>
+                        <button onClick={() => speakText(lectureSummary, lectureLang)} title="Озвучить" style={{ background: '#0f172a', border: 'none', color: '#fff', padding: '0.35rem 0.65rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', fontWeight: 600 }}>
+                          <Volume2 size={12} /> Озвучить
+                        </button>
+                      </div>
                       <div style={{ fontSize: '1rem', color: '#475569', lineHeight: 1.6 }}>{lectureSummary}</div>
                     </div>
                   )}

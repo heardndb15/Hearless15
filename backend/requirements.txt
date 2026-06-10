@@ -6,3 +6,4 @@ pydantic
 python-multipart
 PyPDF2
 supabase
+httpx
